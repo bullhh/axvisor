@@ -23,13 +23,13 @@ timer_list = "0.1.0"
 fdt-parser = "0.4"
 vm-fdt = { git = "https://github.com/bullhh/vm-fdt.git", default-features = false, features = ["alloc"]}
 #smmuv3 = { git = "https://github.com/arceos-hypervisor/smmuv3.git" }
-smmuv3 = { path = "/home/hypervisor/smmuv3" }
+smmuv3 = { path = "/home/szy/work/hypervisor/fork/smmuv3" }
 
 # System dependent modules provided by ArceOS.
 # axstd = { git = "https://github.com/arceos-hypervisor/arceos.git", branch = "vmm", features = [
 # axstd = { path = "/home/zhourui/arceos/arceos-vm-dev-dyn/ulib/axstd", features = [
 # axstd = { git = "https://github.com/arceos-hypervisor/arceos.git", tag="v0.2.6-dyn", features = [
-axstd = { path = "/home/hypervisor/fork/arceos_hv/ulib/axstd", features = [
+axstd = { path = "/home/szy/work/hypervisor/fork/arceos_hv/ulib/axstd", features = [
     "alloc",
     "paging",
     # "fs",
@@ -49,10 +49,12 @@ axaddrspace = { git = "https://github.com/arceos-hypervisor/axaddrspace.git" }
 crate_interface = "0.1"
 axerrno = "0.1.0"
 memory_addr = "0.3"
-page_table_entry = { version = "0.5", features = ["arm-el2"] }
-page_table_multiarch = "0.5"
+page_table_entry = { version = "=0.5.3", features = ["arm-el2"] }
+page_table_multiarch = "=0.5.3"
 # percpu = { version = "0.2.0", features = ["arm-el2"] }
 percpu = { git = "https://github.com/arceos-hypervisor/percpu.git", branch = "custom-base" }
+
+rdrive-macros = "=0.4.0"
 
 
 [build-dependencies]
@@ -64,3 +66,4 @@ syn = "2.0"
 
 [patch.crates-io]
 percpu = { git = "https://github.com/arceos-hypervisor/percpu.git", branch = "custom-base" }
+

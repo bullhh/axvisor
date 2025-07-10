@@ -22,7 +22,7 @@ entry_point = 0x8008_0000
 # load from memory.
 image_location = "memory"
 # The file path of the kernel image.
-kernel_path = "/home/tool/phytium/phytium-Image"
+kernel_path = "/home/szy/work/tool/phytium/phytium-Image"
 # The load address of the kernel image.
 kernel_load_addr = 0x8008_0000
 # The file path of the device tree blob (DTB).

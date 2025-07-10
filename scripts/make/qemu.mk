@@ -23,8 +23,10 @@ qemu_args-riscv64 := \
   -kernel $(OUT_BIN)
 
 qemu_args-aarch64 := \
+  -machine virt,iommu=smmuv3\
   -cpu cortex-a72 \
-  -kernel $(OUT_BIN)
+  -kernel $(OUT_BIN) \
+  -global arm-smmuv3.stage=2 \
 
 qemu_args-y := -m $(MEM) -smp $(SMP) $(qemu_args-$(ARCH))
 

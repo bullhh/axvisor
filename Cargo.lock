@@ -647,6 +647,7 @@ dependencies = [
  "percpu",
  "prettyplease",
  "quote",
+ "rdrive-macros",
  "smmuv3",
  "spin 0.9.8",
  "syn 2.0.102",
