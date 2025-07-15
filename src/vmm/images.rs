@@ -22,6 +22,7 @@ pub fn load_vm_images(config: AxVMCrateConfig, vm: VMRef) -> AxResult {
             "Check your \"image_location\" in config.toml, \"memory\" and \"fs\" are supported,\n NOTE: \"fs\" feature should be enabled if you want to load images from filesystem. (APP_FEATURES=fs)"
         ),
     }?;
+    info!("next to flush ");
     flush_vm_images(&load_ranges);
     Ok(())
 }
@@ -48,7 +49,6 @@ pub struct LoadRange {
 /// Load VM images from memory
 /// into the guest VM's memory space based on the VM configuration.
 fn load_vm_images_from_memory(config: AxVMCrateConfig, vm: VMRef) -> AxResult<Vec<LoadRange>> {
-    let vm_config = config.clone();
     info!("Loading VM[{}] images from memory", config.base.id);
     let mut load_ranges = Vec::new();
 
@@ -64,16 +64,11 @@ fn load_vm_images_from_memory(config: AxVMCrateConfig, vm: VMRef) -> AxResult<Ve
 
     // Load DTB image
     if let Some(buffer) = vm_imags.dtb {
-        load_ranges.append(
-            &mut load_vm_image_from_memory(
-                buffer,
-                config.kernel.dtb_load_addr.unwrap(),
-                vm.clone(),
-            )
-            .expect("Failed to load DTB images"),
-        );
-
-        load_ranges.append(&mut updated_fdt(vm_config, buffer.len(), vm.clone())?);
+        let mut dtb_buffer = Vec::with_capacity(buffer.len());
+        dtb_buffer.extend_from_slice(&buffer); 
+        let dtb_buffer_addr = dtb_buffer.as_ptr() as usize;
+        debug!("dtb_buffer_addr: 0x{:x}, size:{}", dtb_buffer_addr, dtb_buffer.len());
+        load_ranges.append(&mut updated_fdt(config.clone(), dtb_buffer_addr, buffer.len(), vm.clone())?);
     }
 
     // Load BIOS image
@@ -87,11 +82,12 @@ fn load_vm_images_from_memory(config: AxVMCrateConfig, vm: VMRef) -> AxResult<Ve
             .expect("Failed to load BIOS images"),
         );
     }
+    
 
     Ok(load_ranges)
 }
 
-fn load_vm_image_from_memory(
+pub fn load_vm_image_from_memory(
     image_buffer: &[u8],
     load_addr: usize,
     vm: VMRef,
@@ -102,7 +98,7 @@ fn load_vm_image_from_memory(
 
     let image_size = image_buffer.len();
 
-    debug!(
+    info!(
         "loading VM image from memory {:?} {}",
         image_load_gpa,
         image_buffer.len()
@@ -204,7 +200,7 @@ mod fs {
                 return ax_err!(NotFound, "DTB load addr is missed");
             }
  
-            load_ranges.append(&mut updated_fdt(vm_config, dtb_size, vm.clone())?);
+            // load_ranges.append(&mut updated_fdt(vm_config, dtb_size, vm.clone())?);
 
         };
         Ok(load_ranges)

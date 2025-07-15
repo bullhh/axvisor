@@ -21,10 +21,11 @@ fn main() {
     info!("Starting virtualization...");
     info!("Hardware support: {:?}", axvm::has_hardware_support());
     hal::enable_virtualization();
-
-    vmm::smmuv3::init_smmuv3();
     
+    vmm::smmuv3::init_smmuv3();
+
     vmm::init();
+
     vmm::start();
 
     info!("VMM shutdown");

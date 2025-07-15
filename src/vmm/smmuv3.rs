@@ -1,12 +1,13 @@
 use smmuv3::*;
 use std::os::arceos::modules::{axalloc, axhal};
-use memory_addr::{align_up_4k, PhysAddr, VirtAddr, PAGE_SIZE_4K};
+use memory_addr::{PhysAddr, VirtAddr, PAGE_SIZE_4K};
 
 pub struct Smmuv3PagingHandler;
 
 impl PagingHandler for Smmuv3PagingHandler {
     fn alloc_pages(num_pages: usize) -> Option<PhysAddr> {
         // Allocate contiguous 4K pages using the SMMUv3 allocator.
+        info!("Allocating {} pages", num_pages);
         axalloc::global_allocator()
             .alloc_pages(num_pages, PAGE_SIZE_4K).ok().map(PhysAddr::from)
     }
@@ -24,8 +25,10 @@ impl PagingHandler for Smmuv3PagingHandler {
 }
 
 pub fn init_smmuv3() {
-    let mut smmuv3 = SMMUv3::<Smmuv3PagingHandler>::new(0x09050000 as *mut u8);
-    info!("Initializing SMMUv3 at address: 0x{:x?}", 0x09050000);
+    // let mut smmuv3 = SMMUv3::<Smmuv3PagingHandler>::new(0x09050000 as *mut u8);
+    // info!("Initializing SMMUv3 at address: 0x{:x?}", 0x09050000);
+    let mut smmuv3 = SMMUv3::<Smmuv3PagingHandler>::new(0x30000000 as *mut u8);
+    info!("Initializing SMMUv3 at address: 0x{:x?}", 0x30000000);
     smmuv3.init();
 
     info!("smmuv3 version: {:?}", smmuv3.version());
