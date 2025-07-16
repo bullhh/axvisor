@@ -39,7 +39,7 @@ dtb_load_addr = 0x8000_0000
 memory_regions = [
     #[0x20_6000_0000, 0x2000_0000, 0x7, 1], # System RAM MAP_IDENTICAL
     #[0x20_6000_0000, 0x2000_0000, 0x7, 0], # System RAM MAP_IDENTICAL
-    [0x8000_0000, 0x2000_0000, 0x7, 0], # System RAM MAP_IDENTICAL
+    [0x8000_0000, 0x2000_0000, 0x7, 0], # 
 ]
 
 #
