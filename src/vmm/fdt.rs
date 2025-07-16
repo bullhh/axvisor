@@ -49,7 +49,7 @@ pub fn updated_fdt(config: AxVMCrateConfig, fdt_addr: usize, dtb_size: usize, vm
         old_node_level = node.level;
 
         for prop in node.propertys() {
-            // info!("prop.name: {}, node.name: {}", prop.name, node.name());
+            info!("prop.name: {}, node.name: {}", prop.name, node.name());
             new_fdt.property(prop.name, prop.raw_value()).unwrap();
         }
     }
@@ -68,7 +68,6 @@ pub fn updated_fdt(config: AxVMCrateConfig, fdt_addr: usize, dtb_size: usize, vm
     assert_eq!(old_node_level , 0);
     let new_fdt = new_fdt.finish().unwrap();
     let load_ranges = copy_new_fdt_to_new_addr(new_fdt, config.kernel.dtb_load_addr.unwrap(), vm);
-    info!("FDT parsing complete");
     // panic!("FDT parsing complete, starting to update FDT...");
     Ok(load_ranges)
 }

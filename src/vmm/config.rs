@@ -39,6 +39,5 @@ pub fn init_guest_vms() {
         // Load corresponding images for VM.
         info!("VM[{}] created success, loading images...", vm.id());
         load_vm_images(vm_create_config, vm.clone()).expect("Failed to load VM images");
-        info!("loading images done");
     }
 }
