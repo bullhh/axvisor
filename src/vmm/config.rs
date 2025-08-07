@@ -34,6 +34,9 @@ pub fn init_guest_vms() {
 
         // Create VM.
         let vm = VM::new(vm_config).expect("Failed to create VM");
+
+        crate::vmm::smmuv3::init_smmuv3(vm.clone());
+
         push_vm(vm.clone());
 
         // Load corresponding images for VM.

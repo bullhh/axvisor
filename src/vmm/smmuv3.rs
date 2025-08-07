@@ -3,6 +3,7 @@ use std::os::arceos::modules::{axalloc, axhal};
 use memory_addr::{PhysAddr, VirtAddr, PAGE_SIZE_4K};
 use core::{alloc::Layout, ptr::NonNull};
 use std::os::arceos::modules::axdma::{alloc_coherent, dealloc_coherent, BusAddr, DMAInfo};
+use crate::vmm::VMRef;
 
 
 #[cfg(target_arch = "aarch64")]
@@ -12,8 +13,8 @@ pub struct Smmuv3PagingHandler;
 
 impl PagingHandler for Smmuv3PagingHandler {
 
-    const SID_BITS_SET:u32 = 10;
-    const CMDQ_EVENTQ_BITS_SET:u32 = 4;
+    const SID_BITS_SET:u32 = 18;
+    const CMDQ_EVENTQ_BITS_SET:u32 = 16;
 
     fn alloc_pages(num_pages: usize) -> Option<PhysAddr> {
         let alloc_size = num_pages * PAGE_SIZE_4K;
@@ -60,15 +61,16 @@ impl PagingHandler for Smmuv3PagingHandler {
     }
 }
 
-pub fn init_smmuv3() {
+pub fn init_smmuv3(vm: VMRef) -> SMMUv3<Smmuv3PagingHandler> {
     // let mut smmuv3 = SMMUv3::<Smmuv3PagingHandler>::new(0x09050000 as *mut u8);
     // info!("Initializing SMMUv3 at address: 0x{:x?}", 0x09050000);
     let mut smmuv3 = SMMUv3::<Smmuv3PagingHandler>::new(0x30000000 as *mut u8);
     // info!("Initializing SMMUv3 at address: 0x{:x?}", 0x30000000);
     smmuv3.init();
-    smmuv3.add_all_devices();
+
+    smmuv3.add_all_devices(vm.id(), vm.ept_root());
 
     info!("smmuv3 version: {:?}", smmuv3.version());
 
-    
+    smmuv3
 }

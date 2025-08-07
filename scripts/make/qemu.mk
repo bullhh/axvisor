@@ -75,7 +75,7 @@ ifeq ($(ARCH), aarch64)
 endif
 
 ifeq ($(QEMU_LOG), y)
-  qemu_args-y += -D qemu.log -d in_asm,int,mmu,pcall,cpu_reset,guest_errors
+  qemu_args-y += -D qemu.log -d int,mmu,pcall,cpu_reset,guest_errors,page 
 endif
 
 qemu_args-$(SECOND_SERIAL) +=  -serial mon:stdio \
