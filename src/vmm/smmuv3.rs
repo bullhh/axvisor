@@ -13,12 +13,12 @@ pub struct Smmuv3PagingHandler;
 
 impl PagingHandler for Smmuv3PagingHandler {
 
-    const SID_BITS_SET:u32 = 18;
-    const CMDQ_EVENTQ_BITS_SET:u32 = 16;
+    const SID_BITS_SET:u32 = 16;
+    const CMDQ_EVENTQ_BITS_SET:u32 = 10;
 
     fn alloc_pages(num_pages: usize) -> Option<PhysAddr> {
         let alloc_size = num_pages * PAGE_SIZE_4K;
-        let align_bits = u32::min(Self::SID_BITS_SET + 6, Self::CMDQ_EVENTQ_BITS_SET + 4);
+        let align_bits = u32::max(Self::SID_BITS_SET + 6, Self::CMDQ_EVENTQ_BITS_SET + 4);
         let align = 1 << align_bits;
         let layout = Layout::from_size_align(alloc_size, align).unwrap();
         info!("align: 0x{:x}, num_pages: {}", align, num_pages);
@@ -68,7 +68,11 @@ pub fn init_smmuv3(vm: VMRef) -> SMMUv3<Smmuv3PagingHandler> {
     // info!("Initializing SMMUv3 at address: 0x{:x?}", 0x30000000);
     smmuv3.init();
 
-    smmuv3.add_all_devices(vm.id(), vm.ept_root());
+    // smmuv3.add_all_devices(vm.id(), vm.ept_root());
+    // smmuv3.add_all_devices(0, vm.ept_root());
+
+    // smmuv3.add_device(0x100, vm.id(), vm.ept_root());
+    smmuv3.add_device(0x100, 3, vm.ept_root());
 
     info!("smmuv3 version: {:?}", smmuv3.version());
 
