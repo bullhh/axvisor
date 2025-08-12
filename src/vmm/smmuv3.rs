@@ -54,25 +54,16 @@ impl PagingHandler for Smmuv3PagingHandler {
             cache_clean_invalidate_d(start, len);
         }
     }
-
-    fn wait_until(duration: core::time::Duration) -> Result<(), &'static str> {
-        axhal::time::busy_wait_until(duration);
-        Ok(())
-    }
 }
 
 pub fn init_smmuv3(vm: VMRef) -> SMMUv3<Smmuv3PagingHandler> {
     // let mut smmuv3 = SMMUv3::<Smmuv3PagingHandler>::new(0x09050000 as *mut u8);
     // info!("Initializing SMMUv3 at address: 0x{:x?}", 0x09050000);
     let mut smmuv3 = SMMUv3::<Smmuv3PagingHandler>::new(0x30000000 as *mut u8);
-    // info!("Initializing SMMUv3 at address: 0x{:x?}", 0x30000000);
+    info!("Initializing SMMUv3 at address: 0x{:x?}", 0x30000000);
     smmuv3.init();
 
-    // smmuv3.add_all_devices(vm.id(), vm.ept_root());
-    // smmuv3.add_all_devices(0, vm.ept_root());
-
-    // smmuv3.add_device(0x100, vm.id(), vm.ept_root());
-    smmuv3.add_device(0x100, 3, vm.ept_root());
+    smmuv3.add_device(0x100, vm.id(), vm.ept_root());
 
     info!("smmuv3 version: {:?}", smmuv3.version());
 
