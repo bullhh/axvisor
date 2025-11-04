@@ -133,10 +133,9 @@ checksum = "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
 [[package]]
 name = "arceos_api"
 version = "0.2.0"
-source = "git+https://github.com/arceos-hypervisor/arceos.git?tag=hv-0.3.1#0106ce9d36d225943acb93a86359a61346170ff2"
 dependencies = [
  "axalloc",
- "axconfig 0.2.0 (git+https://github.com/arceos-hypervisor/arceos.git?tag=hv-0.3.1)",
+ "axconfig 0.2.0",
  "axdriver",
  "axerrno",
  "axfeat",
@@ -294,7 +293,6 @@ dependencies = [
 [[package]]
 name = "axalloc"
 version = "0.2.0"
-source = "git+https://github.com/arceos-hypervisor/arceos.git?tag=hv-0.3.1#0106ce9d36d225943acb93a86359a61346170ff2"
 dependencies = [
  "allocator",
  "axerrno",
@@ -341,7 +339,6 @@ dependencies = [
 [[package]]
 name = "axconfig"
 version = "0.2.0"
-source = "git+https://github.com/arceos-hypervisor/arceos.git?tag=hv-0.3.1#0106ce9d36d225943acb93a86359a61346170ff2"
 dependencies = [
  "axconfig-macros",
 ]
@@ -433,18 +430,17 @@ dependencies = [
 [[package]]
 name = "axdriver"
 version = "0.2.0"
-source = "git+https://github.com/arceos-hypervisor/arceos.git?tag=hv-0.3.1#0106ce9d36d225943acb93a86359a61346170ff2"
 dependencies = [
  "arm-gic-driver",
  "axalloc",
- "axconfig 0.2.0 (git+https://github.com/arceos-hypervisor/arceos.git?tag=hv-0.3.1)",
+ "axconfig 0.2.0",
  "axdriver_base",
  "axdriver_block",
  "axdriver_pci",
  "axdriver_virtio",
  "axerrno",
  "axhal",
- "axmm",
+ "axklib 0.2.0",
  "cfg-if",
  "crate_interface",
  "dma-api 0.5.1",
@@ -501,7 +497,6 @@ dependencies = [
 [[package]]
 name = "axfeat"
 version = "0.2.0"
-source = "git+https://github.com/arceos-hypervisor/arceos.git?tag=hv-0.3.1#0106ce9d36d225943acb93a86359a61346170ff2"
 dependencies = [
  "axalloc",
  "axdriver",
@@ -518,7 +513,6 @@ dependencies = [
 [[package]]
 name = "axfs"
 version = "0.2.0"
-source = "git+https://github.com/arceos-hypervisor/arceos.git?tag=hv-0.3.1#0106ce9d36d225943acb93a86359a61346170ff2"
 dependencies = [
  "axdriver",
  "axdriver_block",
@@ -572,11 +566,10 @@ dependencies = [
 [[package]]
 name = "axhal"
 version = "0.2.0"
-source = "git+https://github.com/arceos-hypervisor/arceos.git?tag=hv-0.3.1#0106ce9d36d225943acb93a86359a61346170ff2"
 dependencies = [
  "aarch64-cpu",
  "axalloc",
- "axconfig 0.2.0 (git+https://github.com/arceos-hypervisor/arceos.git?tag=hv-0.3.1)",
+ "axconfig 0.2.0",
  "axcpu",
  "axlog",
  "axplat 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -616,7 +609,6 @@ dependencies = [
 [[package]]
 name = "axklib"
 version = "0.2.0"
-source = "git+https://github.com/arceos-hypervisor/arceos.git?tag=hv-0.3.1#0106ce9d36d225943acb93a86359a61346170ff2"
 dependencies = [
  "axerrno",
  "memory_addr",
@@ -636,10 +628,9 @@ dependencies = [
 [[package]]
 name = "axklib-impl"
 version = "0.2.0"
-source = "git+https://github.com/arceos-hypervisor/arceos.git?tag=hv-0.3.1#0106ce9d36d225943acb93a86359a61346170ff2"
 dependencies = [
  "axhal",
- "axklib 0.2.0 (git+https://github.com/arceos-hypervisor/arceos.git?tag=hv-0.3.1)",
+ "axklib 0.2.0",
  "axmm",
  "trait-ffi",
 ]
@@ -647,7 +638,6 @@ dependencies = [
 [[package]]
 name = "axlog"
 version = "0.2.0"
-source = "git+https://github.com/arceos-hypervisor/arceos.git?tag=hv-0.3.1#0106ce9d36d225943acb93a86359a61346170ff2"
 dependencies = [
  "cfg-if",
  "crate_interface",
@@ -658,10 +648,9 @@ dependencies = [
 [[package]]
 name = "axmm"
 version = "0.2.0"
-source = "git+https://github.com/arceos-hypervisor/arceos.git?tag=hv-0.3.1#0106ce9d36d225943acb93a86359a61346170ff2"
 dependencies = [
  "axalloc",
- "axconfig 0.2.0 (git+https://github.com/arceos-hypervisor/arceos.git?tag=hv-0.3.1)",
+ "axconfig 0.2.0",
  "axerrno",
  "axhal",
  "kspin",
@@ -674,7 +663,6 @@ dependencies = [
 [[package]]
 name = "axns"
 version = "0.2.0"
-source = "git+https://github.com/arceos-hypervisor/arceos.git?tag=hv-0.3.1#0106ce9d36d225943acb93a86359a61346170ff2"
 dependencies = [
  "crate_interface",
  "lazyinit",
@@ -907,10 +895,9 @@ dependencies = [
 [[package]]
 name = "axruntime"
 version = "0.2.0"
-source = "git+https://github.com/arceos-hypervisor/arceos.git?tag=hv-0.3.1#0106ce9d36d225943acb93a86359a61346170ff2"
 dependencies = [
  "axalloc",
- "axconfig 0.2.0 (git+https://github.com/arceos-hypervisor/arceos.git?tag=hv-0.3.1)",
+ "axconfig 0.2.0",
  "axdriver",
  "axerrno",
  "axfs",
@@ -937,7 +924,6 @@ dependencies = [
 [[package]]
 name = "axstd"
 version = "0.2.0"
-source = "git+https://github.com/arceos-hypervisor/arceos.git?tag=hv-0.3.1#0106ce9d36d225943acb93a86359a61346170ff2"
 dependencies = [
  "arceos_api",
  "axerrno",
@@ -950,7 +936,6 @@ dependencies = [
 [[package]]
 name = "axsync"
 version = "0.2.0"
-source = "git+https://github.com/arceos-hypervisor/arceos.git?tag=hv-0.3.1#0106ce9d36d225943acb93a86359a61346170ff2"
 dependencies = [
  "axtask",
  "kspin",
@@ -960,9 +945,8 @@ dependencies = [
 [[package]]
 name = "axtask"
 version = "0.2.0"
-source = "git+https://github.com/arceos-hypervisor/arceos.git?tag=hv-0.3.1#0106ce9d36d225943acb93a86359a61346170ff2"
 dependencies = [
- "axconfig 0.2.0 (git+https://github.com/arceos-hypervisor/arceos.git?tag=hv-0.3.1)",
+ "axconfig 0.2.0",
  "axhal",
  "axsched",
  "cfg-if",

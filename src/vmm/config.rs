@@ -27,24 +27,63 @@ pub mod config {
     #[cfg(feature = "fs")]
     pub fn filesystem_vm_configs() -> Vec<String> {
         use axstd::fs;
+        use axstd::io::{BufReader, Read};
 
-        // Try to read config files from a predefined directory
-        let config_dir = "configs/vms";
+        let config_dir = "/guest";
         let mut configs = Vec::new();
 
-        if let Ok(entries) = fs::read_dir(config_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                // Check if the file has a .toml extension
-                let path_str = path.as_str();
-                if path_str.ends_with(".toml")
-                    && let Ok(content) = fs::read_to_string(path_str)
-                {
-                    configs.push(content);
+        debug!("Read VM config files from filesystem.");
+
+        let entries = fs::read_dir(config_dir).expect("Failed to read directory");
+        info!("Read VM config files from {}", config_dir);
+        for entry in entries.flatten() {
+            let path = entry.path();
+            // Check if the file has a .toml extension
+            let path_str = path.as_str();
+            debug!("Considering file: {}", path_str);
+            if path_str.ends_with(".toml") {
+                let toml_file = fs::File::open(path_str).expect("Failed to open file");
+                let file_size = toml_file
+                    .metadata()
+                    .expect("Failed to get file metadata")
+                    .len() as usize;
+
+                info!("File {} size: {}", path_str, file_size);
+
+                if file_size == 0 {
+                    warn!("File {} is empty", path_str);
+                    continue;
+                }
+
+                let mut file = BufReader::new(toml_file);
+                let mut buffer = vec![0u8; file_size];
+                match file.read_exact(&mut buffer) {
+                    Ok(()) => {
+                        debug!(
+                            "Successfully read config file {} as bytes, size: {}",
+                            path_str,
+                            buffer.len()
+                        );
+                        // Convert to string
+                        let content = alloc::string::String::from_utf8(buffer)
+                            .expect("Failed to convert bytes to UTF-8 string");
+
+                        if content.contains("[base]") && content.contains("[kernel]") {
+                            configs.push(content);
+                            info!("TOML config: {} is valid", path_str);
+                        } else {
+                            warn!(
+                                "File {} does not appear to contain valid VM config structure",
+                                path_str
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        error!("Failed to read file {}: {:?}", path_str, e);
+                    }
                 }
             }
         }
-
         configs
     }
 
@@ -86,6 +125,7 @@ pub fn init_guest_vms() {
     }
 
     for raw_cfg_str in gvm_raw_configs {
+        info!("Initializing guest VM with config: {:#?}", raw_cfg_str);
         if let Err(e) = init_guest_vm(&raw_cfg_str) {
             error!("Failed to initialize guest VM: {:?}", e);
         }
