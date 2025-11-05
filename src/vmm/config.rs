@@ -68,7 +68,10 @@ pub mod config {
                         let content = alloc::string::String::from_utf8(buffer)
                             .expect("Failed to convert bytes to UTF-8 string");
 
-                        if content.contains("[base]") && content.contains("[kernel]") {
+                        if content.contains("[base]")
+                            && content.contains("[kernel]")
+                            && content.contains("[device]")
+                        {
                             configs.push(content);
                             info!("TOML config: {} is valid", path_str);
                         } else {
