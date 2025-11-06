@@ -55,7 +55,7 @@ pub mod config {
     /// Check if a directory entry is a VM directory (vm1, vm2, etc.)
     #[cfg(feature = "fs")]
     fn is_vm_directory(entry: &axstd::fs::DirEntry) -> bool {
-        let file_name = entry.file_name();
+        let file_name = entry.file_name().clone();
         let path_str = format!("/guest/{}", file_name);
         
         // Check if the entry is a directory and matches the pattern vmX
@@ -64,16 +64,16 @@ pub mod config {
             info!("Entry {} is not a directory", path_str);
             return false;
         }
-        
-        info!("Considering directory: {}", path_str);
-        // Check if directory name starts with "vm" followed by digits
-        if !file_name.starts_with("vm") || file_name.len() <= 2 {
-            info!("Entry {} does not match vmX pattern", path_str);
-            return false;
-        }
-        // Check if the rest of the name consists of digits
-        let suffix = &file_name[2..];
-        suffix.chars().all(|c| c.is_ascii_digit())
+        true
+        // info!("Considering directory: {}", path_str);
+        // // Check if directory name starts with "vm" followed by digits
+        // if !file_name.starts_with("vm") || file_name.len() <= 2 {
+        //     info!("Entry {} does not match vmX pattern", path_str);
+        //     return false;
+        // }
+        // // Check if the rest of the name consists of digits
+        // let suffix = &file_name[2..];
+        // suffix.chars().all(|c| c.is_ascii_digit())
     }
 
     /// Read the first valid TOML config file from a VM directory
