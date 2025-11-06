@@ -27,67 +27,136 @@ pub mod config {
     #[cfg(feature = "fs")]
     pub fn filesystem_vm_configs() -> Vec<String> {
         use axstd::fs;
-        use axstd::io::{BufReader, Read};
 
         let config_dir = "/guest";
         let mut configs = Vec::new();
 
         debug!("Read VM config files from filesystem.");
 
-        let entries = fs::read_dir(config_dir).expect("Failed to read directory");
-        info!("Read VM config files from {}", config_dir);
-        for entry in entries.flatten() {
-            let path = entry.path();
-            // Check if the file has a .toml extension
-            let path_str = path.as_str();
-            debug!("Considering file: {}", path_str);
-            if path_str.ends_with(".toml") {
-                let toml_file = fs::File::open(path_str).expect("Failed to open file");
-                let file_size = toml_file
-                    .metadata()
-                    .expect("Failed to get file metadata")
-                    .len() as usize;
-
-                info!("File {} size: {}", path_str, file_size);
-
-                if file_size == 0 {
-                    warn!("File {} is empty", path_str);
-                    continue;
-                }
-
-                let mut file = BufReader::new(toml_file);
-                let mut buffer = vec![0u8; file_size];
-                match file.read_exact(&mut buffer) {
-                    Ok(()) => {
-                        debug!(
-                            "Successfully read config file {} as bytes, size: {}",
-                            path_str,
-                            buffer.len()
-                        );
-                        // Convert to string
-                        let content = alloc::string::String::from_utf8(buffer)
-                            .expect("Failed to convert bytes to UTF-8 string");
-
-                        if content.contains("[base]")
-                            && content.contains("[kernel]")
-                            && content.contains("[device]")
-                        {
-                            configs.push(content);
-                            info!("TOML config: {} is valid", path_str);
-                        } else {
-                            warn!(
-                                "File {} does not appear to contain valid VM config structure",
-                                path_str
-                            );
+        // Read directories vm1, vm2, ... from /guest
+        if let Ok(entries) = fs::read_dir(config_dir) {
+            info!("Read VM config files from {}", config_dir);
+            
+            // Iterate through each entry in /guest
+            for entry_result in entries {
+                if let Ok(entry) = entry_result {
+                    if is_vm_directory(&entry) {
+                        if let Some(valid_config) = read_first_valid_config_from_vm_dir(&entry) {
+                            configs.push(valid_config);
                         }
-                    }
-                    Err(e) => {
-                        error!("Failed to read file {}: {:?}", path_str, e);
                     }
                 }
             }
         }
+        info!("Found {} VM config files", configs.len());
         configs
+    }
+
+    /// Check if a directory entry is a VM directory (vm1, vm2, etc.)
+    #[cfg(feature = "fs")]
+    fn is_vm_directory(entry: &axstd::fs::DirEntry) -> bool {
+        let file_name = entry.file_name();
+        let path_str = format!("/guest/{}", file_name);
+        
+        // Check if the entry is a directory and matches the pattern vmX
+        let file_type = entry.file_type();
+        if !file_type.is_dir() {
+            info!("Entry {} is not a directory", path_str);
+            return false;
+        }
+        
+        info!("Considering directory: {}", path_str);
+        // Check if directory name starts with "vm" followed by digits
+        if !file_name.starts_with("vm") || file_name.len() <= 2 {
+            info!("Entry {} does not match vmX pattern", path_str);
+            return false;
+        }
+        // Check if the rest of the name consists of digits
+        let suffix = &file_name[2..];
+        suffix.chars().all(|c| c.is_ascii_digit())
+    }
+
+    /// Read the first valid TOML config file from a VM directory
+    #[cfg(feature = "fs")]
+    fn read_first_valid_config_from_vm_dir(entry: &axstd::fs::DirEntry) -> Option<String> {
+        use axstd::fs;
+        
+        let file_name = entry.file_name();
+        let vm_config_dir = format!("/guest/{}", file_name);
+        
+        if let Ok(vm_entries) = fs::read_dir(&vm_config_dir) {
+            info!("Reading config files from {}", vm_config_dir);
+            
+            // Look for the first valid TOML file in this directory
+            for vm_entry_result in vm_entries {
+                if let Ok(vm_entry) = vm_entry_result {
+                    let vm_file_name = vm_entry.file_name();
+                    info!("Considering file: {}", vm_file_name);
+                    // Check if the file has a .toml extension
+                    if vm_file_name.ends_with(".toml") {
+                        let vm_path_str = format!("{}/{}", vm_config_dir, vm_file_name);
+                        if let Some(content) = read_and_validate_config_file(&vm_path_str) {
+                            info!("TOML config: {} is valid", vm_path_str);
+                            return Some(content);
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Read and validate a config file
+    #[cfg(feature = "fs")]
+    fn read_and_validate_config_file(file_path: &str) -> Option<String> {
+        use axstd::fs::File;
+        use axstd::io::{BufReader, Read};
+        
+        let toml_file = match File::open(file_path) {
+            Ok(file) => file,
+            Err(e) => {
+                error!("Failed to open file {}: {:?}", file_path, e);
+                return None;
+            }
+        };
+        
+        let file_size = toml_file.metadata()
+            .expect("Failed to get file metadata")
+            .len() as usize;
+
+        info!("File {} size: {}", file_path, file_size);
+
+        if file_size == 0 {
+            warn!("File {} is empty", file_path);
+            return None;
+        }
+
+        let mut file = BufReader::new(toml_file);
+        let mut buffer = vec![0u8; file_size];
+        file.read_exact(&mut buffer).expect("Failed to read file");
+        
+        info!(
+            "Successfully read config file {} as bytes, size: {}",
+            file_path,
+            buffer.len()
+        );
+        
+        // Convert to string
+        let content = alloc::string::String::from_utf8(buffer)
+            .expect("Failed to convert bytes to UTF-8 string");
+
+        if content.contains("[base]")
+            && content.contains("[kernel]")
+            && content.contains("[devices]")
+        {
+            Some(content)
+        } else {
+            warn!(
+                "File {} does not appear to contain valid VM config structure",
+                file_path
+            );
+            None
+        }
     }
 
     /// Fallback function for when "fs" feature is not enabled
