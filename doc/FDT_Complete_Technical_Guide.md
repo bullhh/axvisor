@@ -393,11 +393,10 @@ AxVisor 采用工作队列算法进行递归依赖分析：
 ---
 
 ## 第三部分：客户机设备树生成流程
-### 1 完整流程架构
 
 AxVisor的客户机设备树生成是一个高度系统化的过程，涉及8个主要步骤，每个步骤都有明确的输入、处理逻辑和输出结果。整个流程基于严格的代码实现，确保了处理的准确性和可靠性。
 
-#### 1.1 GitHub流程图
+### 1 GitHub流程图
 
 ```mermaid
 graph TD
@@ -430,11 +429,8 @@ graph TD
 
  **步骤 2：检查预定义客户机设备树**
 
-**检查目标**：配置文件 `[kernel]` 部分的 `dtb_path` 字段
-
-**决策逻辑**：
-- **✅ 指定了dtb_path** → 进入步骤3（预定义处理流程）
-- **❌ 未指定dtb_path** → 进入步骤4（动态生成流程）
+- ** 指定了dtb_path** → 进入步骤3（预定义处理流程）
+- ** 未指定dtb_path** → 进入步骤4（动态生成流程）
 
  **步骤 3：预定义设备树处理**
 
@@ -446,28 +442,22 @@ graph TD
  **步骤 4：动态生成设备树**
 
  1. 查找直通设备后代节点
-
  2. 查找设备依赖节点
-
  3. 排除不需要直通的设备
-
  4. 生成客户机设备树
-
  5. 更新memory和chosen等节点
 
  **步骤 5：解析直通设备地址并映射给客户机**
 
-**映射机制**：
-```rust
-// 为每个设备创建映射配置
-PassThroughDeviceConfig {
-    name: device_name,
-    base_gpa: guest_physical_address,
-    base_hpa: host_physical_address, 
-    length: device_memory_size,
-    irq_id: interrupt_number,
-}
-```
+1. **PCIe设备特殊处理**：
+   - 解析`ranges`属性
+   - 支持Configuration/I/O/Memory32/Memory64四种空间
+   - 处理ECAM（Extended Configuration Access Mechanism）空间
+
+2. **普通设备处理**：
+   - 解析`reg`属性获取地址和大小
+   - 支持多地址段设备
+   - 自动处理地址对齐和大小计算
 
  **步骤 6：处理中断配置**
 
@@ -481,11 +471,11 @@ PassThroughDeviceConfig {
  **步骤 7：完成设备树生成**
 
 **完成标志**：
-- ✅ 客户机设备树生成完成
-- ✅ 设备树已加载到客户机内存
-- ✅ 所有直通设备地址已映射
-- ✅ 中断配置已更新
-- ✅ VM可以正常启动执行
+-  客户机设备树生成完成
+-  设备树已加载到客户机内存
+-  所有直通设备地址已映射
+-  中断配置已更新
+-  VM可以正常启动执行
 
 ---
 
@@ -638,173 +628,6 @@ pub fn build_optimized_node_cache<'a>(fdt: &'a Fdt) -> BTreeMap<String, Vec<Node
 - 一次性遍历构建完整索引
 - 使用 BTreeMap 提供对数级查找性能
 - 预分配容器容量减少动态扩容
-
-#### 3.2 工作队列算法实现
-
-```rust
-// 使用工作队列避免递归深度问题
-let mut devices_to_process: Vec<String> = configured_device_names.iter().cloned().collect();
-let mut processed_devices: BTreeSet<String> = BTreeSet::new();
-
-while let Some(device_node_path) = devices_to_process.pop() {
-    if processed_devices.contains(&device_node_path) {
-        continue; // 避免重复处理
-    }
-    processed_devices.insert(device_node_path.clone());
-    
-    // 查找依赖并加入队列
-    let dependencies = find_device_dependencies(&device_node_path, &phandle_map, &node_cache);
-    for dep_node_name in dependencies {
-        if !configured_device_names.contains(&dep_node_name) {
-            devices_to_process.push(dep_node_name.clone());
-            configured_device_names.insert(dep_node_name.clone());
-        }
-    }
-}
-```
-
-**算法优势**：
-- 避免递归调用栈溢出
-- 确保每个设备只处理一次
-- 自动处理循环依赖检测
-
-#### 3.3 内存预分配优化
-
-```rust
-// 根据预期大小预分配容量
-let mut additional_device_names = Vec::with_capacity(estimated_devices);
-let mut dependency_device_names = Vec::with_capacity(estimated_dependencies);
-
-// 字符串复用避免重复分配
-let device_name = if index == 0 {
-    node_name.to_string()
-} else {
-    format!("{}-region{}", node_name, index)
-};
-```
-
-### 4. 错误处理代码示例
-
-#### 4.1 配置验证实现
-
-```rust
-pub fn validate_fdt_config(vm_cfg: &AxVMConfig, fdt: &Fdt) -> Result<(), String> {
-    let node_cache = build_optimized_node_cache(fdt);
-    
-    // 验证设备路径存在性
-    for device in vm_cfg.pass_through_devices() {
-        if !node_cache.contains_key(&device.name) {
-            return Err(format!("Device path '{}' not found in device tree", device.name));
-        }
-    }
-    
-    // 验证地址范围有效性
-    for device in vm_cfg.pass_through_devices() {
-        if device.length == 0 {
-            return Err(format!("Device '{}' has zero length", device.name));
-        }
-    }
-    
-    // 检查地址冲突
-    let mut used_ranges = Vec::new();
-    for device in vm_cfg.pass_through_devices() {
-        let range = (device.base_gpa, device.base_gpa + device.length);
-        for (start, end) in &used_ranges {
-            if range.0 < *end && range.1 > *start {
-                return Err(format!("Address range conflict for device '{}': {:x}-{:x}",
-                                 device.name, range.0, range.1));
-            }
-        }
-        used_ranges.push(range);
-    }
-    
-    Ok(())
-}
-```
-
-#### 4.2 错误恢复机制
-
-```rust
-fn safe_generate_guest_fdt(fdt_bytes: &[u8], vm_cfg: &mut AxVMConfig, crate_config: &AxVMCrateConfig) -> Result<Vec<u8>, String> {
-    // 尝试正常生成
-    match crate_guest_fdt(&fdt, &passthrough_device_names, crate_config) {
-        Ok(dtb_data) => {
-            if let Err(e) = validate_generated_dtb(&dtb_data) {
-                warn!("Generated DTB validation failed: {e}, attempting recovery");
-                recover_guest_fdt(&dtb_data, vm_cfg, crate_config)
-            } else {
-                Ok(dtb_data)
-            }
-        }
-        Err(e) => {
-            error!("Guest FDT generation failed: {e}");
-            // 最后的备用方案：使用最小设备树
-            create_minimal_guest_fdt(vm_cfg, crate_config)
-        }
-    }
-}
-```
-
-### 5. 调试和监控代码
-
-#### 5.1 性能监控实现
-
-```rust
-struct FDTGenerationMetrics {
-    total_nodes_processed: usize,
-    nodes_included: usize,
-    nodes_excluded: usize,
-    cpu_nodes_filtered: usize,
-    generation_time_ms: u64,
-}
-
-impl FDTGenerationMetrics {
-    fn report(&self) {
-        info!("FDT Generation Metrics:");
-        info!("  Total nodes processed: {}", self.total_nodes_processed);
-        info!("  Inclusion rate: {:.1}%", 
-              self.nodes_included as f64 / self.total_nodes_processed as f64 * 100.0);
-        info!("  CPU nodes filtered: {}", self.cpu_nodes_filtered);
-        info!("  Generation time: {} ms", self.generation_time_ms);
-    }
-}
-```
-
-#### 5.2 详细调试输出
-
-```rust
-pub fn debug_fdt_generation(fdt: &Fdt, passthrough_device_names: &[String]) {
-    info!("=== FDT Generation Debug ===");
-    
-    let all_nodes: Vec<Node> = fdt.all_nodes().collect();
-    info!("Device tree analysis:");
-    info!("  Total nodes: {}", all_nodes.len());
-    
-    // 模拟生成过程
-    let mut included_nodes = 0;
-    let mut excluded_nodes = 0;
-    
-    for (index, node) in all_nodes.iter().enumerate() {
-        let node_path = build_node_path(&all_nodes, index);
-        let action = determine_node_action(node, &node_path, passthrough_device_names);
-        
-        match action {
-            NodeAction::Skip => {
-                trace!("SKIP: {} ({})", node_path, node.name());
-                excluded_nodes += 1;
-            }
-            _ => {
-                trace!("INCLUDE: {} ({}) -> {:?}", node_path, node.name(), action);
-                included_nodes += 1;
-            }
-        }
-    }
-    
-    info!("Generation summary:");
-    info!("  Included nodes: {}", included_nodes);
-    info!("  Excluded nodes: {}", excluded_nodes);
-}
-```
 
 ---
 
