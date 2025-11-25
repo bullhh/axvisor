@@ -1,24 +1,24 @@
-# AxVisor FDT 设备树处理完整技术指南
-
+---
+sidebar_position: 2
 ---
 
 ## 第一部分：使用说明
 
 ### 1. 快速开始
 
-AxVisor 的设备树（FDT）处理模块为 AArch64 架构的虚拟机提供定制化的设备树生成服务。根据您的需求，可以选择以下两种使用方式：
+AxVisor 的设备树（FDT）处理模块为 AArch64 架构的虚拟机提供定制化的设备树生成服务。根据需求，可以选择以下两种使用方式：
 
 #### 方式一：使用预定义设备树文件
 ```toml
 [kernel]
 dtb_path = "/path/to/your-custom.dtb"
 ```
-适用场景：您已经有完整的、经过验证的设备树文件，只需要更新CPU和内存信息。
+适用场景：已经有完整的、经过验证的设备树文件，后续将只会更新memory节点和CPU节点信息。
 
 #### 方式二：动态生成设备树
 ```toml
 [kernel]
-# dtb_path = ""  # 不配置此字段，触发动态生成
+# dtb_path = ""  # 不使用此字段，触发动态生成
 ```
 适用场景：需要根据配置灵活选择直通设备，实现动态的设备分配。
 
@@ -42,8 +42,8 @@ kernel_path = "Image"       # 内核文件路径
 kernel_load_addr = 0x80200000  # 内核加载地址
 
 # 设备树配置
-dtb_path = ""               # 留空表示动态生成，或指定文件路径
-dtb_load_addr = 0x80000000  # 可选：DTB加载地址
+#dtb_path = "/path/to/your-custom.dtb"   # 可选：预定义DTB
+#dtb_load_addr = 0x80000000               # 可选：DTB加载地址
 
 # 内存区域配置
 memory_regions = [
@@ -54,9 +54,9 @@ memory_regions = [
 [devices]
 # 直通设备配置（仅在动态生成时生效）
 passthrough_devices = [
-    ["/soc/uart@2800c000"],           # 简化路径格式（推荐）
-    # 或者传统格式：
-    # ["uart0", 0x2800c000, 0x2800c000, 0x1000, 0x1]
+    ["/soc/uart@2800c000"],           # 完整路径格式（推荐）
+    # 或者传统格式，两种格式不可以混用
+    # ["uart0", 0x2800c000, 0x2800c000, 0x1000, 0x1] #[name, base_gpa, base_hpa, length, irq_id]
 ]
 
 # 排除设备配置
@@ -70,56 +70,95 @@ passthrough_addresses = [
 ]
 ```
 
-### 3. 常见使用场景配置
+### 3. 字段说明
 
-#### 3.1 最小配置 - 仅UART设备
+#### 3.1 `dtb_path`（设备树文件位置）
+
+客户机设备树可以有两种来源，一种是基于axvisor的设备树和客户机配置文件生成的客户机设备树，另一种是基于开发者提供的客户机设备树。当客户机配置文件中使用`dtb_path`字段时，客户机设备树基于`dtb_path`字段指定的设备树文件生成，不使用该字段时基于axvisor设备树生成。
+
 ```toml
-[base]
-id = 1
-cpu_num = 1
-phys_cpu_ids = [0x200]
-
 [kernel]
-image_location = "memory"
-memory_regions = [[0x80000000, 0x10000000, 0x7, 1]]
+dtb_path = "/path/to/custom.dtb"  # 使用预定义设备树
+# dtb_path = ""                    # 动态生成设备树
+```
 
-[devices]
+#### 3.2 `dtb_load_addr`(客户机设备树加载地址)
+
+`dtb_load_addr`字段指定生成的客户机设备树放置的客户机物理地址（GPA），当使用该字段且当客户机内存使用直通方式（GPA=HVA）时，客户机设备树将会加载到该地址，当配置文件中未使用该字段或客户机内存使用非直通方式（GPA≠HVA）时，客户机设备树将放置到客户机内存的前512MB内存的最后一段的位置，该地址由axvisor计算获得。
+
+#### 3.3 `phys_cpu_ids`(客户机CPU ID)
+
+phys_cpu_ids字段用来选择客户机使用的CPU物理ID，例如飞腾派e2000平台的设备树cpus字段如下，其中reg属性中定义了CPU物理ID (0x200/0x201/0x00/0x100)。
+```
+cpus {
+    #address-cells = <0x02>;
+    #size-cells = <0x00>;
+
+    cpu@0 {
+        compatible = "phytium,ftc310\0arm,armv8";
+        reg = <0x00 0x200>;
+        ...
+    };
+
+    cpu@1 {
+        compatible = "phytium,ftc310\0arm,armv8";
+        reg = <0x00 0x201>;
+        ...
+    };
+
+    cpu@100 {
+        compatible = "phytium,ftc664\0arm,armv8";
+        reg = <0x00 0x00>;
+        ...
+    };
+
+    cpu@101 {
+        compatible = "phytium,ftc664\0arm,armv8";
+        reg = <0x00 0x100>;
+        ...
+    };
+};
+```
+#### 3.4 `memory_regions`(客户机内存地址)
+
+无论哪种客户机内存分配方式，客户机设备树都会根据申请到的客户机内存更新memory字段
+```
+memory {
+    device_type = "memory";
+    reg = <0x00 0x80000000 0x00 0x20000000>;
+};
+```
+#### 3.5 `passthrough_devices`（直通设备）
+
+现支持两种格式的设备直通方式
+
+**格式一：传统完整配置**
+```
 passthrough_devices = [
-    ["/soc/uart@2800c000"]           # 仅直通串口，用于调试
+    ["intc@8000000", 0x800_0000, 0x800_0000, 0x50_000, 0x1], #[name, base_gpa, base_hpa, length, irq_id]
+    ["pl011@9000000", 0x900_0000, 0x900_0000, 0x1000, 0x1],
+    ["pl031@9010000", 0x901_0000, 0x901_0000, 0x1000, 0x1],
 ]
 ```
 
-#### 3.2 多设备直通配置
-```toml
-[devices]
+**格式二：全路径配置（推荐）**
+```
 passthrough_devices = [
-    ["/soc"],                         # 直通整个SOC域
-    ["/pcie@30000000"]               # 直通PCIe域
-]
-excluded_devices = [
-    ["/soc/power@fdc20000"],          # 排除电源管理
-    ["/soc/thermal@fdc60000"]         # 排除温度传感器
+    ["/syscon@fdc20000"],
+    ["/pinctrl/gpio3@fe760000"], #从根节点开始的完整路径
+    ["/"],        #根节点，表示所有设备都直通
 ]
 ```
 
-#### 3.3 开发调试配置
-```toml
-[devices]
-passthrough_devices = [
-    ["/"]                             # 直通所有设备，便于调试
-]
-# 注意：生产环境不建议使用此配置
-```
+当直通设备使用全路径方式时，这里只需要填写需要直通的设备名称即可，设备名称是从跟节点开始的完整路径，此时axvisor会根据提供的设备树或主设备树自动查找相关节点并直通，该节点及相关节点的地址均等信息会根据设备树识别并补充完整，其中"/"表示根节点，当直通根节点时主机所有节点均会直通给客户机。
 
-### 4. 配置验证清单
+#### 3.6 `excluded_devices` （不直通设备）
 
-在启动 VM 前，请确认以下配置项：
+设备直通时axvisor会识别相关设备并一并直通给客户机，当某个设备不希望直通给客户机时可以加入该字段中，这样该设备及其地址将不会直通给客户机使用，生成的客户机设备树也不会包含该设备。
 
-- [ ] `phys_cpu_ids` 中的值在主机设备树中存在
-- [ ] `memory_regions` 中的地址空间不重叠
-- [ ] `passthrough_devices` 中的路径在设备树中存在
-- [ ] 如果使用 `dtb_path`，文件路径正确且可访问
-- [ ] 内存映射类型（第4个字段）配置正确
+#### 3.7 `passthrough_addresses`（直通地址）
+
+该字段用于将指定地址直通给客户机使用，在启动如定制linux客户机需要使用某段地址或设备树非标准需要直接指定直通地址时将会使用到。
 
 ---
 
@@ -155,14 +194,14 @@ passthrough_devices = [
 设备树采用树形层次结构，每个节点代表一个硬件设备或组件，节点属性以键值对形式描述设备特性。
 
 ```
-根节点 (/)
+/ (根节点)
 ├── cpus (CPU节点)
 │   ├── cpu@0 (CPU核心0)
 │   └── cpu@1 (CPU核心1)
 ├── soc (系统级芯片)
 │   ├── uart@2800c000 (串口设备)
 │   └── gpio@fe760000 (GPIO设备)
-└── memory@80000000 (内存区域)
+└── memory (内存区域)
 ```
 
 每个节点的关键属性：
@@ -189,7 +228,6 @@ passthrough_devices = [
 4. **直通地址处理**：如果有完整的设备配置，直接应用地址映射
 
 **优势**：保持原有设备树的完整性，降低引入错误的风险
-**劣势**：灵活性受限，无法动态调整设备配置
 
 #### 2.2 动态生成模式的智能处理机制
 
@@ -222,7 +260,6 @@ passthrough_devices = [
    - 生成二进制的 DTB 文件
 
 **优势**：高灵活性，智能依赖处理，精确控制
-**劣势**：计算开销较大，需要更多验证
 
 ### 3. 设备直通的依赖关系原理
 
@@ -310,699 +347,115 @@ AxVisor 采用工作队列算法进行递归依赖分析：
 - **无重复**：每个设备只处理一次
 - **无循环**：通过已处理集合避免死循环
 
-### 4. 地址映射和中断路由原理
+### 4. 设备树相关节点查找流程
 
-#### 4.1 地址映射的三种模式
+设备相关节点的查找主要用于识别直通设备及其相关的祖先节点和后代节点:
 
-**MAP_ALLOC（类型0）**：
-- 宿主机为 VM 分配新的物理内存页
-- GPA（客户机物理地址）与 HPA（宿主机物理地址）无直接关系
-- 适用于标准内存分配场景
+1. **解析配置**：从配置文件读取直通设备列表
+2. **查找后代**：遍历设备树，找出所有直通设备的子节点、孙节点等后代节点
+3. **查找依赖**：分析设备属性中的 phandle 引用，找出依赖的其他设备
+4. **查找祖先**：确定需要包含的祖先节点，确保设备路径完整
+5. **排除节点**：移除配置中指定的排除设备及其后代
+6. **生成结果**：构建最终的设备节点列表用于生成 Guest FDT
 
-**MAP_IDENTICAL（类型1）**：
-- GPA 与 HVA（宿主机虚拟地址）建立 1:1 映射关系
-- 起始地址由宿主机随机分配
-- 适用于需要高地址一致性的场景
+假设有以下设备树结构：
 
-**MAP_RESERVED（类型2）**：
-- 将宿主机中预留的内存区域完全 1:1 映射
-- 起始地址与配置完全一致
-- 适用于特定的硬件预留内存
-
-#### 4.2 中断路由机制
-
-在设备树中，中断信息通过多个属性定义：
-
+```plain
+/
+├── soc
+│   ├── bus@10000000
+│   │   ├── device@10001000
+│   │   └── device@10002000
+│   └── bus@20000000
+│       ├── device@20001000
+│       └── device@20002000
+└── pci@30000000
+    ├── pci-bridge@0
+    │   └── eth@0
+    └── usb@1
 ```
-interrupt-parent = <&gic>;           // 指定中断控制器
-interrupts = <0x0 0x73 0x4>;        // 中断类型, 中断号, 触发方式
-interrupt-extended = <&gic 0x0 0x73 0x4>; // 扩展格式
-```
 
-AxVisor 的中断处理：
+如果配置指定了直通设备 `/soc/bus@10000000/device@10001000`，那么：
 
-1. **收集中断信息**：遍历所有设备节点的中断属性
-2. **验证中断父节点**：确保中断父节点是有效的 GIC
-3. **提取 GIC_SPI 中断**：只处理 GIC_SPI 类型的中断
-4. **配置 VM 中断**：将中断信息添加到 VM 配置中
+- **后代节点**：无（该设备没有子节点）
+- **祖先节点**：`/soc/bus@10000000` 和 `/soc`
+- **最终结果**：包含这三个节点以确保设备路径完整
+
+如果配置指定了直通设备 `/pci@30000000`，那么：
+
+- **后代节点**：`/pci@30000000/pci-bridge@0`、`/pci@30000000/pci-bridge@0/eth@0`、`/pci@30000000/usb@1`
+- **祖先节点**：[/](file:///home/szy/work/hypervisor/buddy/axvisor/Cargo.lock)（根节点）
+- **最终结果**：包含所有这些节点
+
+这种机制确保了直通设备在 客户机系统中能获得完整的设备树支持，包括必要的父节点和子节点。
+
 
 ---
 
-## 第三部分：实现说明
-
-### 1. 核心架构设计
-
-#### 1.1 模块化架构
-
-AxVisor FDT 处理模块采用清晰的模块化架构，职责分离：
-
-```
-kernel/src/vmm/fdt/
-├── mod.rs        # 入口管理和缓存控制
-├── parser.rs     # FDT解析和配置处理
-├── create.rs     # 客户机FDT生成
-└── device.rs     # 设备依赖分析和查找
-```
-
-**模块职责划分**：
-
-- **mod.rs**：作为整个模块的入口点，负责流程控制和全局缓存管理
-- **parser.rs**：处理底层的 FDT 解析工作，包括 CPU 配置、中断解析和地址映射
-- **create.rs**：专注于客户机 FDT 的构建，包括节点过滤和结构生成
-- **device.rs**：实现复杂的设备依赖分析算法和节点查找功能
-
-#### 1.2 数据流设计
-
-整个 FDT 处理流程的数据流向：
-
-```
-宿主机FDT → 解析器 → 设备分析器 → 生成器 → 缓存管理器 → VM配置
-    ↑          ↑         ↑          ↑         ↑
-配置文件 → 配置解析器 → 依赖解析 → 节点过滤 → 地址映射
-```
-
-**数据转换过程**：
-
-1. **原始数据**：二进制 FDT 数据 + TOML 配置文件
-2. **结构化数据**：FDT 节点对象 + 配置结构体
-3. **分析结果**：设备路径列表 + 依赖关系图
-4. **生成数据**：新的 FDT 节点树
-5. **最终输出**：二进制 DTB 数据 + VM 配置更新
-
-### 2. 客户机设备树生成流程（基于代码实现）
-
-AxVisor 的客户机设备树生成是一个复杂的系统化过程，涉及配置分析、设备发现、依赖解析、树结构构建等多个环节。整个流程严格基于代码实现，确保每个步骤都有明确的处理逻辑。
-
-#### 2.1 流程总览
-
-```mermaid
-graph TD
-    A[1. 开始生成] --> B{2. 检查预定义设备树}
-    B -->|有dtb_path| C[3. 预定义设备树处理]
-    B -->|无dtb_path| D[4. 动态生成设备树]
-    
-    C --> E[5. 更新内存和chosen节点]
-    D --> E
-    E --> F[6. 解析直通设备地址]
-    F --> G[7. 处理中断配置]
-    G --> H[8. 完成设备树生成]
-    
-    subgraph "动态生成子流程"
-        D1[4a. 查找直通设备后代节点]
-        D2[4b. 查找设备依赖节点]
-        D3[4c. 排除不需要的设备]
-        D4[4d. 生成客户机设备树]
-        
-        D --> D1 --> D2 --> D3 --> D4
-    end
-```
-
-#### 2.2 详细生成步骤
-
-##### **步骤 1：开始生成客户机设备树文件**
-
-**触发时机**：系统启动时，AxVisor 初始化阶段
-
-**决策逻辑**：
-```rust
-// 在 handle_fdt_operations 函数中实现
-pub fn handle_fdt_operations(vm_config: &mut AxVMConfig, vm_create_config: &AxVMCrateConfig) {
-    let host_fdt_bytes = get_host_fdt();
-    
-    // 根据配置决定生成方式
-    if let Some(provided_dtb) = get_developer_provided_dtb(vm_config, vm_create_config) {
-        // 走预定义流程
-        update_provided_fdt(&provided_dtb, host_fdt_bytes, vm_create_config);
-    } else {
-        // 走动态生成流程
-        setup_guest_fdt_from_vmm(host_fdt_bytes, vm_config, vm_create_config);
-    }
-}
-```
-
-##### **步骤 2：检查预定义客户机设备树**
-
-**检查逻辑**：系统首先检查配置文件 `[kernel]` 部分的 `dtb_path` 字段
-
-**配置示例**：
-```toml
-[kernel]
-dtb_path = "/path/to/custom.dtb"    # 指定预定义设备树
-# dtb_path = ""                     # 空字符串表示动态生成
-```
-
-**分支决策**：
-- **指定了 dtb_path** → 进入步骤 3（预定义设备树处理）
-- **未指定 dtb_path** → 进入步骤 4（动态生成设备树）
-
-##### **步骤 3：预定义设备树处理**
-
-当检测到 `dtb_path` 配置时，系统采用最小干预策略处理预定义设备树：
-
-```rust
-pub fn update_provided_fdt(provided_dtb: &[u8], host_dtb: &[u8], crate_config: &AxVMCrateConfig) {
-    // 3.1 加载预定义设备树
-    let provided_fdt = Fdt::from_bytes(provided_dtb).expect("Failed to parse provided DTB");
-    let host_fdt = Fdt::from_bytes(host_dtb).expect("Failed to parse host DTB");
-    
-    // 3.2 根据配置更新CPU节点
-    let provided_dtb_data = update_cpu_node(&provided_fdt, &host_fdt, crate_config);
-    
-    // 3.3 缓存更新后的设备树
-    crate_guest_fdt_with_cache(provided_dtb_data, crate_config);
-}
-```
-
-**处理要点**：
-- **保留原有结构**：尽可能保持预定义设备树的完整性
-- **CPU节点更新**：从宿主机设备树提取 CPU 信息，根据 `phys_cpu_ids` 过滤
-- **地址映射处理**：如果配置了完整的直通设备地址，直接按配置映射
-
-##### **步骤 4：动态生成设备树**
-
-这是最复杂的处理流程，分为四个关键子步骤：
-
-###### **4a. 查找所有直通设备的后代节点**
-
-```rust
-// Phase 1: 发现直通设备的所有后代节点
-for device_name in &initial_device_names {
-    // 获取指定设备的所有子孙节点
-    let descendant_paths = get_descendant_nodes_by_path(&node_cache, device_name);
-    
-    trace!("Found {} descendant paths for {}", descendant_paths.len(), device_name);
-    
-    for descendant_path in descendant_paths {
-        if !configured_device_names.contains(&descendant_path) {
-            configured_device_names.insert(descendant_path.clone());
-            additional_device_names.push(descendant_path.clone());
-        }
-    }
-}
-```
-
-**后代节点查找算法**：
-- **路径前缀匹配**：以直通设备路径为前缀的所有节点
-- **层级验证**：确保真正的父子关系（用 `/` 分隔）
-- **去重处理**：避免重复添加已存在的设备
-
-**示例**：
-- 直通设备：`/soc/uart@2800c000`
-- 发现的后代：`/soc/uart@2800c000/pinctrl-0`, `/soc/uart@2800c000/clocks`
-
-###### **4b. 查找所有设备的依赖节点**
-
-采用工作队列算法进行递归依赖分析：
-
-```rust
-// Phase 2: 递归查找设备依赖关系
-let mut devices_to_process: Vec<String> = configured_device_names.iter().cloned().collect();
-let mut processed_devices: BTreeSet<String> = BTreeSet::new();
-let phandle_map = build_phandle_map(fdt);
-
-while let Some(device_node_path) = devices_to_process.pop() {
-    if processed_devices.contains(&device_node_path) {
-        continue; // 避免重复处理
-    }
-    
-    // 查找当前设备的直接依赖
-    let dependencies = find_device_dependencies(&device_node_path, &phandle_map, &node_cache);
-    
-    for dep_node_name in dependencies {
-        if !configured_device_names.contains(&dep_node_name) {
-            dependency_device_names.push(dep_node_name.clone());
-            devices_to_process.push(dep_node_name.clone());
-            configured_device_names.insert(dep_node_name.clone());
-        }
-    }
-}
-```
-
-**支持的 Phandle 属性类型**：
-- `clocks`, `assigned-clocks` - 时钟依赖
-- `power-domains` - 电源域依赖  
-- `phys`, `phy-handle` - PHY 依赖
-- `interrupts`, `interrupts-extended` - 中断依赖
-- `gpios`, `*-gpios`, `*-gpio` - GPIO 依赖
-- `dmas` - DMA 依赖
-- 以及其他 10+ 种属性类型
-
-**依赖解析示例**：
-```
-UART设备节点:
-  clocks = <&clk_uart 0x14a>, <&clk_gpio 0x14b>;
-  
-解析结果:
-  依赖1: clock-controller@fdd20000 (specifier: 0x14a)
-  依赖2: clock-controller@fdd20000 (specifier: 0x14b)
-```
-
-###### **4c. 排除不需要直通的设备**
-
-```rust
-// Phase 3: 应用排除配置
-let excluded_device_path: Vec<String> = vm_cfg.excluded_devices()
-    .iter().flatten().cloned().collect();
-
-for device_path in &excluded_device_path {
-    // 查找排除设备的所有后代
-    let descendant_paths = get_descendant_nodes_by_path(&node_cache, device_path);
-    
-    // 添加到排除集合
-    for descendant_path in descendant_paths {
-        all_excludes_devices.push(descendant_path.clone());
-    }
-}
-
-// 从最终设备列表中移除排除设备
-all_device_names.retain(|device_name| {
-    let should_keep = !excluded_set.contains(device_name);
-    if !should_keep {
-        info!("Excluding device: {}", device_name);
-    }
-    should_keep
-});
-```
-
-**排除机制特点**：
-- **最高优先级**：排除配置优先于直通配置
-- **递归排除**：自动排除指定设备的所有后代节点
-- **安全隔离**：确保敏感设备不会意外直通
-
-###### **4d. 生成客户机设备树**
-
-```rust
-// Phase 4: 构建最终的客户机设备树
-pub fn crate_guest_fdt(fdt: &Fdt, passthrough_device_names: &[String], crate_config: &AxVMCrateConfig) -> Vec<u8> {
-    let mut fdt_writer = FdtWriter::new().unwrap();
-    let mut node_stack: Vec<FdtWriterNode> = Vec::new();
-    
-    let all_nodes: Vec<Node> = fdt.all_nodes().collect();
-    
-    for (index, node) in all_nodes.iter().enumerate() {
-        let node_path = build_node_path(&all_nodes, index);
-        let node_action = determine_node_action(node, &node_path, passthrough_device_names);
-        
-        match node_action {
-            NodeAction::RootNode => { /* 处理根节点 */ }
-            NodeAction::CpuNode => { /* 处理CPU节点 */ }
-            NodeAction::IncludeAsPassthroughDevice => { /* 处理直通设备 */ }
-            NodeAction::IncludeAsChildNode => { /* 处理子节点 */ }
-            NodeAction::IncludeAsAncestorNode => { /* 处理祖先节点 */ }
-            NodeAction::Skip => { continue; } // 跳过节点
-        }
-        
-        // 复制节点属性
-        for prop in node.propertys() {
-            fdt_writer.property(prop.name, prop.raw_value()).unwrap();
-        }
-    }
-    
-    fdt_writer.finish().unwrap()
-}
-```
-
-**节点分类处理逻辑**：
-- **根节点**：直接包含，作为设备树的根
-- **CPU节点**：根据 `phys_cpu_ids` 过滤，只包含指定的CPU
-- **内存节点**：跳过处理，后续单独添加
-- **直通设备**：根据依赖分析结果决定是否包含
-- **其他节点**：默认跳过，减少设备树复杂度
-
-##### **步骤 5：更新内存和chosen节点**
-
-**内存节点生成**：
-```rust
-fn add_memory_node(new_memory: &[VMMemoryRegion], new_fdt: &mut FdtWriter) {
-    let mut new_value: Vec<u32> = Vec::new();
-    
-    for mem in new_memory {
-        let gpa = mem.gpa.as_usize() as u64;
-        let size = mem.size() as u64;
-        
-        // 添加地址和大小（大端序）
-        new_value.push((gpa >> 32) as u32);    // 高32位地址
-        new_value.push((gpa & 0xFFFFFFFF) as u32);  // 低32位地址
-        new_value.push((size >> 32) as u32);    // 高32位大小
-        new_value.push((size & 0xFFFFFFFF) as u32);  // 低32位大小
-    }
-    
-    new_fdt.property_array_u32("reg", new_value.as_ref()).unwrap();
-    new_fdt.property_string("device_type", "memory").unwrap();
-}
-```
-
-**DTB加载地址计算**：
-```rust
-fn calculate_dtb_load_addr(vm: VMRef, fdt_size: usize) -> GuestPhysAddr {
-    vm.with_config(|config| {
-        let dtb_addr = if let Some(addr) = config.image_config.dtb_load_gpa
-            && !main_memory.is_identical() {
-            // 使用配置的地址
-            addr
-        } else {
-            // 计算默认地址：主内存前512MB的最后2MB对齐地址
-            let main_memory_size = main_memory.size().min(512 * MB);
-            let addr = (main_memory.gpa + main_memory_size - fdt_size).align_down(2 * MB);
-            addr
-        };
-        
-        config.image_config.dtb_load_gpa = Some(dtb_addr);
-        dtb_addr
-    })
-}
-```
-
-##### **步骤 6：解析直通设备地址并映射给客户机**
-
-**地址解析流程**：
-```rust
-pub fn parse_passthrough_devices_address(vm_cfg: &mut AxVMConfig, dtb: &[u8]) {
-    let fdt = Fdt::from_bytes(dtb).expect("Failed to parse DTB");
-    
-    // 清现现有配置（如果是动态生成模式）
-    vm_cfg.clear_pass_through_devices();
-    
-    for node in fdt.all_nodes() {
-        let node_name = node.name().to_string();
-        
-        // 6.1 PCIe设备特殊处理
-        if node_name.starts_with("pcie@") || node_name.contains("pci") {
-            if let Some(pci) = node.clone().into_pci()
-                && let Ok(ranges) = pci.ranges() {
-                
-                for (index, range) in ranges.enumerate() {
-                    add_pci_ranges_config(vm_cfg, &node_name, &range, index);
-                }
-            }
-        } else {
-            // 6.2 普通设备处理
-            if let Some(reg_iter) = node.reg() {
-                for (index, reg) in reg_iter.enumerate() {
-                    let base_address = reg.address as usize;
-                    let size = reg.size.unwrap_or(0);
-                    
-                    add_device_address_config(vm_cfg, &node_name, base_address, size, index, None);
-                }
-            }
-        }
-    }
-}
-```
-
-**PCIe地址空间处理**：
-- **Configuration Space**：PCIe配置空间
-- **I/O Space**：I/O端口地址空间
-- **Memory32 Space**：32位内存地址空间
-- **Memory64 Space**：64位内存地址空间
-
-##### **步骤 7：处理中断配置**
-
-**中断解析实现**：
-```rust
-pub fn parse_vm_interrupt(vm_cfg: &mut AxVMConfig, dtb: &[u8]) {
-    const GIC_PHANDLE: usize = 1; // GIC的标准phandle值
-    let fdt = Fdt::from_bytes(dtb).expect("Failed to parse DTB");
-    
-    for node in fdt.all_nodes() {
-        // 跳过特定节点
-        if node.name().starts_with("memory") 
-            || node.name().starts_with("interrupt-controller")
-            || node.name().starts_with("intc") {
-            continue;
-        }
-        
-        // 解析中断属性
-        if let Some(interrupts) = node.interrupts() {
-            // 验证中断父节点
-            if let Some(parent) = node.interrupt_parent() {
-                if let Some(phandle) = parent.node.phandle() {
-                    if phandle.as_usize() != GIC_PHANDLE {
-                        continue; // 跳过非GIC中断
-                    }
-                }
-            }
-            
-            // 收集GIC_SPI中断
-            for interrupt in interrupts {
-                for (k, v) in interrupt.enumerate() {
-                    match k {
-                        0 => { if v != 0 { break; } } // 只处理GIC_SPI
-                        1 => vm_cfg.add_pass_through_spi(v), // 中断号
-                        2 => {}, // 触发方式，暂不处理
-                        _ => {}
-                    }
-                }
-            }
-        }
-    }
-}
-```
-
-**中断处理特点**：
-- **类型过滤**：只处理 GIC_SPI 类型的中断
-- **自动路由**：将中断信息添加到VM的直通中断配置
-- **安全隔离**：确保中断配置的正确性
-
-##### **步骤 8：完成设备树生成**
-
-**最终处理**：
-```rust
-// 将生成的设备树加载到VM内存
-let vm_clone = vm.clone();
-let dest_addr = calculate_dtb_load_addr(vm, new_fdt_bytes.len());
-
-info!("New FDT will be loaded at {:x}, size: 0x{:x}", dest_addr, new_fdt_bytes.len());
-
-load_vm_image_from_memory(&new_fdt_bytes, dest_addr, vm_clone)
-    .expect("Failed to load VM images");
-```
-
-**完成标志**：
-- ✅ 设备树生成完成
-- ✅ 内存映射配置完成  
-- ✅ 中断路由配置完成
-- ✅ 设备树已加载到客户机内存
-- ✅ VM可以正常启动
-
----
-
-## 第五部分：客户机设备树生成流程详解
-
-### 5.1 完整流程架构
+## 第三部分：客户机设备树生成流程
+### 1 完整流程架构
 
 AxVisor的客户机设备树生成是一个高度系统化的过程，涉及8个主要步骤，每个步骤都有明确的输入、处理逻辑和输出结果。整个流程基于严格的代码实现，确保了处理的准确性和可靠性。
 
-#### 5.1.1 GitHub流程图
+#### 1.1 GitHub流程图
 
 ```mermaid
-%%{init: {
-  'theme': 'base',
-  'themeVariables': {
-    'primaryColor': '#f3f9ff',
-    'primaryTextColor': '#0d47a1',
-    'primaryBorderColor': '#2196f3',
-    'lineColor': '#42a5f5',
-    'fillType0': '#e3f2fd',
-    'fillType1': '#bbdefb',
-    'fillType2': '#90caf9'
-  }
-}}%%
-flowchart TD
-    A[🚀 1. 开始生成<br/>系统启动初始化] --> B{📋 2. 检查预定义设备树<br/>dtb_path字段检查}
+graph TD
+    A[开始生成客户机设备树] --> B{是否有预定义设备树?}
     
-    B -->|✅ 有dtb_path| C[📄 3. 预定义设备树处理<br/>最小干预策略]
-    B -->|❌ 无dtb_path| D[🔧 4. 动态生成设备树<br/>四阶段处理]
+    B -->|是| C[加载预定义设备树文件]
+    C --> D[更新CPU节点和memory节点]
+    D --> E[检查是否有直通地址配置]
+    E -->|有| G[直接按配置映射设备内存]
+    E -->|无| H[解析设备树获取地址]
     
-    subgraph D1 [动态生成子流程]
-        D1a[4a. 查找直通设备<br/>后代节点]
-        D1b[4b. 查找设备<br/>依赖节点]
-        D1c[4c. 排除不需要<br/>直通的设备]
-        D1d[4d. 生成客户机<br/>设备树结构]
-        
-        D1a --> D1b --> D1c --> D1d
-    end
+    B -->|否| I[动态生成设备树]
+    I --> J[查找直通设备的后代节点和依赖节点]
+    J --> L[排除不需要直通的设备]
+    L --> M[生成客户机设备树]
+    M --> N[更新memory和chosen等节点]
+    N --> H
     
-    D --> D1
-    
-    C --> E[💾 5. 更新内存和<br/>chosen节点]
-    D1d --> E
-    
-    E --> F[🗺️ 6. 解析直通设备<br/>地址并映射]
-    F --> G[⚡ 7. 处理中断<br/>配置]
-    G --> H[🎉 8. 完成<br/>设备树生成]
-    
-    %% 样式定义
-    classDef start fill:#e3f2fd,stroke:#2196f3,stroke-width:2px,color:#0d47a1
-    classDef decision fill:#bbdefb,stroke:#2196f3,stroke-width:2px,color:#0d47a1
-    classDef process fill:#90caf9,stroke:#2196f3,stroke-width:2px,color:#ffffff
-    classDef subgraph fill:#f3f9ff,stroke:#42a5f5,stroke-width:1px,color:#0d47a1
-    
-    class A start
-    class B decision
-    class C,E,F,G,H process
-    class D1,D1a,D1b,D1c,D1d subgraph
+    G --> O[解析直通设备地址并映射]
+    H --> O
+    O --> P[处理中断配置]
+    P --> Q[结束]
 ```
 
-### 5.2 详细步骤说明
+### 2 详细步骤说明
 
-#### **步骤 1：开始生成客户机设备树文件**
+**步骤 1：开始生成客户机设备树文件**
 
-**触发条件**：系统启动时，AxVisor初始化阶段
+- 系统启动时，AxVisor会根据配置决定是使用预定义设备树还是动态生成设备树
 
-**核心逻辑**：
-- 系统启动时自动触发FDT处理流程
-- 根据VM配置决定使用预定义还是动态生成方式
-- 为整个VM生命周期准备设备树资源
-
-**实现位置**：`kernel/src/vmm/fdt/mod.rs::handle_fdt_operations()`
-
-#### **步骤 2：检查预定义客户机设备树**
+ **步骤 2：检查预定义客户机设备树**
 
 **检查目标**：配置文件 `[kernel]` 部分的 `dtb_path` 字段
-
-**配置格式**：
-```toml
-[kernel]
-dtb_path = "/path/to/custom.dtb"    # 使用预定义设备树
-# dtb_path = ""                     # 空字符串或省略：动态生成
-```
 
 **决策逻辑**：
 - **✅ 指定了dtb_path** → 进入步骤3（预定义处理流程）
 - **❌ 未指定dtb_path** → 进入步骤4（动态生成流程）
 
-#### **步骤 3：预定义设备树处理**
+ **步骤 3：预定义设备树处理**
 
-**处理策略**：最小干预，保持原有结构完整性
-
-**核心操作**：
 1. **加载预定义设备树**：解析用户提供的DTB文件
-2. **CPU节点更新**：根据`phys_cpu_ids`配置更新CPU信息
+2. **节点更新**：根据`phys_cpu_ids`配置更新CPU信息，更新memory节点
 3. **保留原有结构**：尽可能保持预定义设备树的完整性
 4. **地址映射处理**：如配置了完整直通设备地址，直接按配置映射
 
-**技术特点**：
-- 适合已知设备需求的场景
-- 减少系统处理开销
-- 保持用户自定义配置的优先级
+ **步骤 4：动态生成设备树**
 
-#### **步骤 4：动态生成设备树**
+ 1. 查找直通设备后代节点
 
-这是最复杂的处理流程，采用**四阶段算法**：
+ 2. 查找设备依赖节点
 
-##### **阶段4a：查找直通设备后代节点**
+ 3. 排除不需要直通的设备
 
-**算法逻辑**：
-- 遍历配置中的`passthrough_devices`列表
-- 对每个设备路径，递归查找所有子孙节点
-- 使用路径前缀匹配确定后代关系
-- 层级验证确保真正的父子关系
+ 4. 生成客户机设备树
 
-**查找示例**：
-```
-直通设备: /soc/uart@2800c000
-发现后代: 
-├── /soc/uart@2800c000/pinctrl-0
-├── /soc/uart@2800c000/clocks  
-└── /soc/uart@2800c000/power-domains
-```
+ 5. 更新memory和chosen等节点
 
-##### **阶段4b：查找设备依赖节点**
-
-**依赖解析算法**：
-- 采用工作队列（BFS）算法进行递归分析
-- 支持15+种phandle属性类型解析
-- 构建完整的设备依赖关系图
-- 自动避免循环依赖和重复处理
-
-**支持的主要依赖类型**：
-- **时钟依赖**：`clocks`, `assigned-clocks`
-- **电源域依赖**：`power-domains`
-- **PHY依赖**：`phys`, `phy-handle`
-- **中断依赖**：`interrupts`, `interrupts-extended`
-- **GPIO依赖**：`gpios`, `*-gpios`, `*-gpio`
-- **DMA依赖**：`dmas`
-
-**依赖解析示例**：
-```
-原始属性: clocks = <&clk_uart 0x14a>, <&clk_gpio 0x14b>;
-解析结果:
-├── 依赖1: clock-controller@fdd20000 (specifier: 0x14a)
-└── 依赖2: clock-controller@fdd20000 (specifier: 0x14b)
-```
-
-##### **阶段4c：排除不需要直通的设备**
-
-**排除机制**：
-- 读取`excluded_devices`配置列表
-- 自动查找排除设备的所有后代节点
-- 从最终设备列表中移除这些设备
-- 确保排除配置具有最高优先级
-
-**安全特点**：
-- 防止敏感设备意外直通
-- 递归排除确保完整性
-- 支持精细化的设备访问控制
-
-##### **阶段4d：生成客户机设备树**
-
-**节点分类处理**：
-```rust
-enum NodeAction {
-    Skip,                     // 跳过节点
-    RootNode,                 // 根节点 - 直接包含
-    CpuNode,                  // CPU节点 - 根据phys_cpu_ids过滤
-    IncludeAsPassthroughDevice, // 直通设备 - 完整包含
-    IncludeAsChildNode,       // 子节点 - 作为直通设备后代
-    IncludeAsAncestorNode,    // 祖先节点 - 确保路径完整
-}
-```
-
-**处理逻辑**：
-- **根节点**：直接包含，作为设备树基础
-- **CPU节点**：根据`phys_cpu_ids`精确过滤
-- **内存节点**：跳过处理，后续统一添加
-- **设备节点**：根据依赖分析结果决定包含策略
-
-#### **步骤 5：更新内存和chosen节点**
-
-**内存节点生成**：
-- 根据`memory_regions`配置生成内存描述
-- 支持多段内存区域配置
-- 自动处理大小端序转换
-- 生成标准的`memory@xxx`节点格式
-
-**DTB加载地址计算**：
-```rust
-// 计算逻辑：
-if config.dtb_load_addr.is_some() && memory.is_direct_mapped() {
-    // 使用配置的地址
-    use_configured_address()
-} else {
-    // 计算默认地址：主内存前512MB的最后2MB对齐地址
-    calculate_default_address()
-}
-```
-
-**chosen节点更新**：
-- 添加启动参数信息
-- 设置初始化内存范围
-- 配置console设备信息
-
-#### **步骤 6：解析直通设备地址并映射给客户机**
-
-**地址解析策略**：
-
-1. **PCIe设备特殊处理**：
-   - 解析`ranges`属性
-   - 支持Configuration/I/O/Memory32/Memory64四种空间
-   - 处理ECAM（Extended Configuration Access Mechanism）空间
-
-2. **普通设备处理**：
-   - 解析`reg`属性获取地址和大小
-   - 支持多地址段设备
-   - 自动处理地址对齐和大小计算
+ **步骤 5：解析直通设备地址并映射给客户机**
 
 **映射机制**：
 ```rust
@@ -1016,7 +469,7 @@ PassThroughDeviceConfig {
 }
 ```
 
-#### **步骤 7：处理中断配置**
+ **步骤 6：处理中断配置**
 
 **中断解析流程**：
 1. **遍历所有设备节点**：查找`interrupts`属性
@@ -1025,35 +478,7 @@ PassThroughDeviceConfig {
 4. **提取中断信息**：获取中断号和触发方式
 5. **配置中断路由**：将中断信息添加到VM配置
 
-**中断类型支持**：
-- **GIC_SPI**：共享外设中断（优先处理）
-- **GIC_PPI**：私有外设中断
-- **GIC_SGI**：软件生成中断
-
-**安全验证**：
-- 中断号范围检查
-- 中断控制器存在性验证
-- 避免中断冲突处理
-
-#### **步骤 8：完成设备树生成**
-
-**最终操作**：
-1. **加载设备树到VM内存**：
-   ```rust
-   let dest_addr = calculate_dtb_load_addr(vm, fdt_size);
-   load_vm_image_from_memory(&fdt_bytes, dest_addr, vm)
-   ```
-
-2. **缓存管理**：
-   ```rust
-   crate_guest_fdt_with_cache(fdt_data, vm_config);
-   // 缓存键格式: "/guest-fdt/{vm_id}"
-   ```
-
-3. **配置更新**：
-   - 更新VM的设备树配置
-   - 设置DTB加载地址
-   - 完成内存映射配置
+ **步骤 7：完成设备树生成**
 
 **完成标志**：
 - ✅ 客户机设备树生成完成
@@ -1061,244 +486,6 @@ PassThroughDeviceConfig {
 - ✅ 所有直通设备地址已映射
 - ✅ 中断配置已更新
 - ✅ VM可以正常启动执行
-
-### 5.3 性能优化与错误处理
-
-#### **性能优化策略**
-
-1. **缓存优化**：
-   - 全局BTreeMap缓存，O(log n)查找复杂度
-   - 按VM ID索引，避免重复计算
-   - 自动生命周期管理
-
-2. **内存优化**：
-   - 预分配容量，减少内存重分配
-   - 字符串复用，降低内存占用
-   - 及时释放临时数据结构
-
-3. **算法优化**：
-   - 工作队列算法避免重复依赖处理
-   - BTreeSet去重，O(log n)插入复杂度
-   - 路径前缀匹配，线性时间复杂度
-
-#### **错误处理机制**
-
-1. **分层错误处理**：
-   - 配置验证层：检查配置合法性
-   - 解析执行层：处理设备树解析错误
-   - 系统集成层：处理VM集成异常
-
-2. **恢复策略**：
-   - 降级处理：动态生成失败时使用最小设备树
-   - 重试机制：临时性错误自动重试
-   - 详细日志：记录完整的错误上下文
-
-3. **安全验证**：
-   - 地址范围检查
-   - 设备访问权限验证
-   - 中断配置一致性检查
-
-### 5.4 调试与监控
-
-#### **调试信息输出**
-
-```rust
-// 分级调试日志
-debug!("FDT processing started for VM: {}", vm_id);
-info!("Found {} passthrough devices", device_count);
-warn!("Device {} excluded by configuration", device_name);
-error!("Failed to parse device tree: {}", error);
-```
-
-#### **性能监控指标**
-
-- **处理时间**：整个FDT生成流程耗时
-- **内存使用**：峰值内存占用
-- **设备数量**：处理的直通设备数量
-- **缓存命中率**：FDT缓存的命中情况
-
-#### **可视化工具支持**
-
-- **设备树结构图**：自动生成节点关系图
-- **依赖关系图**：显示设备间的依赖关系
-- **地址映射表**：可视化HPA到GPA的映射关系
-
-#### 2.1 设备发现四阶段算法
-
-**阶段设计理念**：
-四阶段算法的设计目标是确保设备发现的完整性、正确性和效率，每个阶段都有明确的职责和输出。
-
-**Phase 1: 后代节点发现**
-```
-输入：配置的直通设备列表
-处理：对每个设备，查找其所有子节点、孙节点等
-输出：扩展后的设备列表（包含后代）
-```
-
-实现要点：
-- 采用路径前缀匹配算法
-- 利用 BTreeMap 提高查找效率
-- 避免重复添加已存在的设备
-
-**Phase 2: 依赖关系分析**
-```
-输入：扩展后的设备列表
-处理：分析每个设备的 phandle 引用，递归查找依赖
-输出：完整的设备列表（包含依赖）
-```
-
-实现要点：
-- 工作队列算法避免递归深度问题
-- phandle 到节点路径的映射表加速查找
-- 支持 15+ 种 phandle 属性类型的智能解析
-
-**Phase 3: 排除设备处理**
-```
-输入：完整设备列表 + 排除配置
-处理：移除指定设备及其所有后代
-输出：最终的设备列表
-```
-
-实现要点：
-- 排除规则具有最高优先级
-- 自动处理排除设备的后代节点
-- 保持设备路径的完整性
-
-**Phase 4: 结果整理**
-```
-输入：最终设备列表
-处理：移除根节点，排序输出
-输出：用于生成 FDT 的设备列表
-```
-
-#### 2.2 节点处理分类算法
-
-**分类策略**：
-每个设备树节点都需要确定其处理方式，分类算法采用优先级决策：
-
-```rust
-决策优先级（从高到低）：
-1. 根节点 → RootNode（必须包含）
-2. 内存节点 → Skip（跳过，后处理）
-3. CPU节点 → CpuNode（条件包含）
-4. 精确匹配直通设备 → IncludeAsPassthroughDevice
-5. 直通设备的后代 → IncludeAsChildNode
-6. 直通设备的祖先 → IncludeAsAncestorNode
-7. 其他节点 → Skip
-```
-
-**层级关系验证**：
-为了确保节点关系的正确性，算法会验证层级匹配：
-
-```
-后代节点验证：
-- 路径前缀匹配
-- 路径长度大于父节点
-- 用'/'分隔确保真正的父子关系
-- 节点层级关系验证
-
-祖先节点验证：
-- 直通设备路径以当前节点路径为前缀
-- 路径长度大于当前节点
-- 下一个字符是'/'或当前节点是根节点
-```
-
-#### 2.3 地址映射算法
-
-**PCIe 设备特殊处理**：
-PCIe 设备具有复杂的地址空间，需要特殊处理：
-
-```
-PCIe 地址空间类型：
-- Configuration Space: 配置空间访问
-- I/O Space: I/O 端口访问
-- Memory32 Space: 32位内存空间
-- Memory64 Space: 64位内存空间
-```
-
-每个空间类型都需要独立的地址映射配置，算法会：
-1. 解析设备的 ranges 属性
-2. 根据空间类型生成不同的配置项
-3. 为每个地址段创建独立的直通配置
-
-**普通设备地址解析**：
-普通设备的地址解析相对简单：
-1. 读取 reg 属性
-2. 解析地址和大小信息
-3. 创建直通设备配置
-
-### 3. 内存管理和缓存策略
-
-#### 3.1 全局缓存架构
-
-**缓存设计目标**：
-- 避免重复的 FDT 生成计算
-- 支持多 VM 并发访问
-- 提供快速的设备树检索
-
-**缓存结构**：
-```
-全局缓存 (BTreeMap<VM_ID, DTB_Data>)
-    ↓
-互斥锁保护 (Mutex)
-    ↓
-内存对齐和边界管理
-```
-
-**缓存生命周期**：
-1. VM 创建时生成 FDT 并缓存
-2. VM 运行期间从缓存读取
-3. VM 销毁时自动清理缓存
-
-#### 3.2 内存优化策略
-
-**节点缓存优化**：
-```
-传统方式：每次都遍历所有节点 → O(n) 查找
-优化方式：预构建路径索引 → O(log n) 查找
-
-数据结构：
-BTreeMap<String, Vec<Node>>
-    ↓
-完整路径 → 节点列表
-```
-
-**字符串复用策略**：
-- 避免重复的字符串分配
-- 使用引用和借用减少拷贝
-- 预分配容器容量减少动态扩容
-
-### 4. 错误处理和恢复机制
-
-#### 4.1 分层错误处理
-
-**输入验证层**：
-- FDT 格式验证（魔数、完整性）
-- 配置文件语法和语义检查
-- 设备路径存在性验证
-
-**处理过程层**：
-- 依赖循环检测
-- 地址冲突检测
-- 资源不足处理
-
-**输出验证层**：
-- 生成 FDT 的完整性检查
-- 必需节点的存在性验证
-- 地址映射的正确性验证
-
-#### 4.2 恢复机制
-
-**降级策略**：
-当遇到可恢复错误时，系统会尝试降级处理：
-```
-完整设备树 → 最小设备树 → 默认设备树
-```
-
-**自动修复**：
-- 补充缺失的必需节点
-- 修复常见的配置错误
-- 使用安全的默认值
 
 ---
 
