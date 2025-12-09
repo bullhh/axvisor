@@ -1,14 +1,14 @@
 # 内存嗅探流程详解
 
-## 概述
+## 1 概述
 
 内存嗅探是 Axvisor 启动过程中最关键的环节之一，它负责识别、分类和组织物理内存资源。在虚拟化环境中，准确的内存嗅探不仅关系到 Hypervisor 自身的稳定运行，更直接影响后续虚拟机的内存分配和管理。本节将深入分析 Axvisor 内存嗅探的完整实现原理和关键机制。
 
 ---
 
-## 1. 平台选择机制：`dyn-plat` 特性的作用
+### 1.1 平台选择机制：`dyn-plat` 特性的作用
 
-### 1.1 特性定义与传递
+### 1.1.1 特性定义与传递
 
 在 `kernel/Cargo.toml` 中定义了 `dyn-plat` 特性：
 
@@ -17,7 +17,7 @@
 dyn-plat = ["axstd/myplat", "axstd/driver-dyn", "axruntime/driver-dyn"]
 ```
 
-### 1.2条件编译逻辑
+### 1.1.2 条件编译逻辑
 
 在 `axhal/src/lib.rs` 中，使用 `cfg_if!` 宏进行平台选择：
 
@@ -60,7 +60,7 @@ cfg_if::cfg_if! {
 
 ### 2.2 `somehal` 提供的功能
 
-#### 1. **CPU 信息获取**：`cpu_id_list()` 返回可用的 CPU ID 列表
+#### 2.2.1 **CPU 信息获取**：`cpu_id_list()` 返回可用的 CPU ID 列表
 
 **实现位置**：`src/common/mem/stack.rs`
 
@@ -90,7 +90,7 @@ pub fn cpu_id_list() -> impl Iterator<Item = usize> {
 - 主 CPU ID 来自 `boot_info().cpu_id`
 - 次级 CPU ID 存储在各自的栈底，通过遍历物理内存区域获取
 
-#### 2. **设备树解析**：解析 bootloader 传递的设备树信息
+#### 2.2.2 **设备树解析**：解析 bootloader 传递的设备树信息
 
 **实现位置**：`src/common/fdt/mod.rs`
 
@@ -117,7 +117,7 @@ pub fn cpu_id_list() -> impl Iterator<Item = usize> {
 - 过滤禁用的 CPU 核心
 - 提取 CPU 寄存器地址作为唯一标识
 
-#### 3. **内存区域识别**：识别 RAM、MMIO、保留区域等
+#### 2.2.3 **内存区域识别**：识别 RAM、MMIO、保留区域等
 
 **实现位置**：`src/common/mem/mod.rs`
 
@@ -145,7 +145,7 @@ fn init_regions(args_regions: &[MemoryRegion]) {
 - 区分 RAM、保留区域和设备内存
 - 为内核镜像和栈空间预留内存
 
-#### 4. **硬件特性检测**：检测虚拟化支持、中断控制器类型等
+#### 2.2.4 **硬件特性检测**：检测虚拟化支持、中断控制器类型等
 
 **实现位置**：`src/arch/aarch64/mod.rs`
 

@@ -1,10 +1,10 @@
 # 两阶段地址翻译机制详解
 
-## 概述
+## 1 概述
 
 在虚拟化环境中，地址翻译需要两个阶段的转换过程。Axvisor 作为一个 Type-1 型 Hypervisor，完整实现了 ARM64 的两阶段地址翻译机制，实现了对 Guest 完全透明的内存虚拟化。
 
-### 四种地址类型
+### 1.1 四种地址类型
 
 在虚拟化环境中，内存地址有四种不同的"身份"：
 
@@ -25,7 +25,7 @@
 - **HVA** (Host Virtual Address)：axvisor使用的虚拟地址  
 - **HPA** (Host Physical Address)：真实的物理内存地址
 
-### 为什么需要两阶段翻译？
+### 1.2 为什么需要两阶段翻译
 
 **问题**：如果只用一次翻译，虚拟机直接访问物理内存，就无法实现内存隔离。
 
@@ -41,9 +41,9 @@ GPA ──► HPA (由axvisor的页表管理)
 最终效果：每个虚拟机都有独立的"物理地址空间"
 ```
 
-## 两阶段翻译原理详解
+## 2 两阶段翻译原理详解
 
-### 第一阶段翻译：GVA → GPA 的机制
+### 2.1 第一阶段翻译：GVA → GPA 的机制
 
 第一阶段的地址翻译由 Guest OS 自己完成，整个过程对 Guest OS 完全透明。Guest OS 配置自己的页表，以为自己正在物理机上运行。
 
@@ -73,7 +73,7 @@ Guest 执行 ldr x0, [x1] (x1 = 0x80000000):
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### 第二阶段翻译：GPA → HPA 的硬件机制
+### 2.2 第二阶段翻译：GPA → HPA 的硬件机制
 
 第二阶段翻译由 ARM64 硬件自动完成，对 Guest 完全透明。Axvisor 设置 HCR_EL2.VM=1 启用 Stage-2 翻译，Guest 完全不知道这个操作的存在。
 
@@ -160,7 +160,7 @@ Guest 执行 ldr x0, [x1] (x1 = 0x80000000):
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### Guest 的虚拟化无感知性
+### 2.3 Guest 的虚拟化无感知性
 
 Guest 完全不知道自己是虚拟机，无法感知任何 EL2 寄存器的存在：
 
@@ -209,11 +209,11 @@ unsafe fn restore_vm_system_regs(&mut self) {
 
 这种透明性是虚拟化技术的核心优势，Guest OS 无需任何修改即可在虚拟化环境中运行。
 
-## ARM64 虚拟化硬件支持
+## 3 ARM64 虚拟化硬件支持
 
-### 关键寄存器
+### 3.1 关键寄存器
 
-#### HCR_EL2 (Hypervisor Configuration Register)
+#### 3.1.1 HCR_EL2 (Hypervisor Configuration Register)
 
 控制虚拟化行为的核心寄存器，Guest 完全无法访问。
 
@@ -223,7 +223,7 @@ unsafe fn restore_vm_system_regs(&mut self) {
 - **TSC (19)**: SMC 指令拦截控制
 - **IMO (4)**: 物理中断虚拟化控制
 
-#### VTTBR_EL2 (Virtualization Translation Table Base Register)
+#### 3.1.2 VTTBR_EL2 (Virtualization Translation Table Base Register)
 
 每个虚拟机都有独立的 Stage-2 页表基址。
 
@@ -239,7 +239,7 @@ unsafe fn restore_vm_system_regs(&mut self) {
 - **VMID**: 虚拟机标识符，支持 256 个虚拟机
 - **页表基址**: Stage-2 L0 页表的物理地址，必须 4KB 对齐
 
-#### VTCR_EL2 (Virtualization Translation Control Register)
+#### 3.1.3 VTCR_EL2 (Virtualization Translation Control Register)
 
 配置 Stage-2 翻译的所有参数。
 
@@ -249,9 +249,9 @@ unsafe fn restore_vm_system_regs(&mut self) {
 - **SL0**: 起始级别 (Axvisor 使用 L0 开始，4级页表)
 - **T0SZ**: IPA 大小 (48位 IPA 空间)
 
-## Stage-2 页表管理实现
+## 4 Stage-2 页表管理实现
 
-### Stage-2 页表项格式
+### 4.1 Stage-2 页表项格式
 
 Stage-2 页表项与普通页表项有重要区别：
 
@@ -286,11 +286,11 @@ impl A64PTEHV {
 }
 ```
 
-### 映射策略的实现
+### 4.2 映射策略的实现
 
 Axvisor 支持三种不同的 Stage-2 映射策略，这些策略通过 axaddrspace 库的 Backend 机制实现：
 
-#### 1. 线性映射 (MapAlloc)
+#### 4.2.1 线性映射 (MapAlloc)
 
 虚拟机指定期望的物理地址，axvisor 分配实际物理内存并建立映射。
 
@@ -370,7 +370,7 @@ pub(crate) fn map_linear(
 - 偏移量：0x20000000
 - 映射关系：GPA → HPA = GPA - 0x20000000
 
-#### 2. 恒等映射 (MapIdentical)
+#### 4.2.2 恒等映射 (MapIdentical)
 
 最简单的映射方式，GPA 和 HPA 数值相等。
 
@@ -385,7 +385,7 @@ pub(crate) fn map_linear(
 - 偏移量：0
 - 映射关系：GPA → HPA = GPA
 
-#### 3. 预留映射 (MapReserved)
+#### 4.2.3 预留映射 (MapReserved)
 
 使用预分配的物理内存区域，通常用于设备映射或特殊内存区域。
 
@@ -418,7 +418,7 @@ for pt_device in inner_mut.config.pass_through_devices() {
 - 指定 GPA：0x80000000
 - 建立映射：GPA 0x80000000 → HPA 0x50000000
 
-### Stage-2页表建立的完整调用链
+### 4.3 Stage-2页表建立的完整调用链
 
 **五层责任链的职责分工**：
 
@@ -479,7 +479,7 @@ for pt_device in inner_mut.config.pass_through_devices() {
    ```
 
 
-### 硬件加速
+### 4.4 硬件加速
 
 充分利用 ARM64 硬件特性：
 - Stage-2 翻译完全由硬件自动完成
@@ -507,6 +507,6 @@ impl<H: AxVCpuHal> axvcpu::AxArchVCpu for Aarch64VCpu<H> {
 }
 ```
 
-## 总结
+## 5 总结
 
 两阶段地址翻译是现代虚拟化技术的核心机制，Axvisor 充分利用了 ARM64 硬件的虚拟化扩展，实现了高效、安全的地址翻译。这种设计既保证了虚拟机的隔离性，又维持了良好的性能表现，是虚拟化技术的重要创新。
