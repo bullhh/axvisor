@@ -1,3 +1,9 @@
+[patch.crates-io.axaddrspace]
+path = "crates/axaddrspace"
+
+[patch."https://github.com/arceos-hypervisor/axvm.git".axvm]
+path = "crates/axvm"
+
 [target.aarch64-unknown-none-softfloat]
 rustflags = [
     "-Clink-args=-no-pie",
@@ -17,4 +23,3 @@ rustflags = [
 
 [alias]
 xtask = "run --package xtask --"
-

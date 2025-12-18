@@ -212,8 +212,14 @@ pub fn init_guest_vm(raw_cfg: &str) -> AxResult<usize> {
 fn config_guest_address(vm: &VM, main_memory: &VMMemoryRegion) {
     const MB: usize = 1024 * 1024;
     vm.with_config(|config| {
+        info!(
+            "kernel_load_gpa: {:#x}, bsp_entry: {:#x}, bsp_entry: {:#x}",
+            config.image_config.kernel_load_gpa,
+            config.cpu_config.bsp_entry,
+            config.cpu_config.ap_entry
+        );
         if main_memory.is_identical() {
-            debug!(
+            info!(
                 "Adjusting kernel load address from {:#x} to {:#x}",
                 config.image_config.kernel_load_gpa, main_memory.gpa
             );

@@ -42,7 +42,8 @@ axstd = {git = "https://github.com/arceos-org/arceos.git", tag = "dev-251202", f
   "smp", # "page-alloc-64g",
 ]}
 
-axalloc = {git = "https://github.com/arceos-org/arceos.git", tag = "dev-251202"}
+axalloc = {path = "modules/axalloc"}
+#axalloc = {git = "https://github.com/arceos-org/arceos.git", tag = "dev-251202"}
 axconfig = {git = "https://github.com/arceos-org/arceos.git", tag = "dev-251202"}
 axdisplay = {git = "https://github.com/arceos-org/arceos.git", tag = "dev-251202"}
 axdriver = {git = "https://github.com/arceos-org/arceos.git", tag = "dev-251202"}
@@ -76,6 +77,7 @@ page_table_multiarch = "0.5"
 percpu = {version = "0.2", features = ["arm-el2"]}
 rdif-intc = "0.12"
 rdrive = "0.18"
+axbacktrace = "0.1"
 
 vm-fdt = {git = "https://github.com/bullhh/vm-fdt.git", default-features = false, features = ["alloc"]}
 
@@ -95,3 +97,4 @@ axvmconfig = {git = "https://github.com/arceos-hypervisor/axvmconfig.git", branc
 [patch."https://github.com/arceos-org/arceos"]
 axconfig = {path = "modules/axconfig"}
 axruntime = {path = "modules/axruntime"}
+axalloc = {path = "modules/axalloc"}

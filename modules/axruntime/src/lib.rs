@@ -35,6 +35,8 @@ mod lang_items;
 #[cfg(feature = "smp")]
 mod mp;
 
+use axalloc::global_allocator;
+
 #[cfg(feature = "smp")]
 pub use self::mp::rust_main_secondary;
 
