@@ -266,8 +266,8 @@ pub enum MemoryType {
 ```rust
 /// 内部分配器实例 - 供axalloc模块使用
 pub struct AllocatorInstance {
-    palloc: Spin<BuddyPageAllocator>,
-    balloc: Spin<SlabByteAllocator>,
+    palloc: SpinNoIrq<BuddyPageAllocator>,
+    balloc: SpinNoIrq<SlabByteAllocator>,
 }
 
 impl AllocatorInstance {
@@ -280,8 +280,8 @@ impl AllocatorInstance {
         balloc.set_page_allocator(&mut *palloc);
         
         Self {
-            palloc: Spin::new(palloc),
-            balloc: Spin::new(balloc),
+            palloc: SpinNoIrq::new(palloc),
+            balloc: SpinNoIrq::new(balloc),
         }
     }
     
