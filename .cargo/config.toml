@@ -1,8 +1,11 @@
+[patch."https://github.com/arceos-hypervisor/axvm.git".axvm]
+path = "crates/axvm"
+
 [patch.crates-io.axaddrspace]
 path = "crates/axaddrspace"
 
-[patch."https://github.com/arceos-hypervisor/axvm.git".axvm]
-path = "crates/axvm"
+[alias]
+xtask = "run --package xtask --"
 
 [target.aarch64-unknown-none-softfloat]
 rustflags = [
@@ -20,6 +23,3 @@ rustflags = [
     "-Clink-args=-znostart-stop-gc",
     "-Clink-args=-Tlink.x",
 ]
-
-[alias]
-xtask = "run --package xtask --"

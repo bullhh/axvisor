@@ -45,7 +45,8 @@ extern-trait = "0.2"
 fdt-parser = "0.4"
 memory_addr.workspace = true
 page_table_entry = {version = "0.5", features = ["arm-el2"]}
-page_table_multiarch = "0.5"
+#page_table_multiarch = "0.5"
+page_table_multiarch = {workspace = true}
 percpu = {version = "0.2", features = ["arm-el2"]}
 rdif-intc = "0.12"
 rdrive = "0.18"
