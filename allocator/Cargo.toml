@@ -1,0 +1,28 @@
+[package]
+name = "axvisor-allocator"
+version = "0.1.0"
+edition = "2021"
+authors = ["Axvisor Team"]
+description = "Axvisor memory allocator with Buddy and Slab allocation"
+license = "GPL-3.0-or-later OR Apache-2.0 OR MulanPSL-2.0"
+
+[features]
+default = []
+full = ["allocator_api"]
+
+allocator_api = []
+axerrno = ["dep:axerrno"]
+
+[dependencies]
+axerrno = { version = "0.1", optional = true }
+log = "0.4"
+axlog = { git = "https://github.com/arceos-org/arceos.git", tag = "dev-251202" }
+kspin = { workspace = true }
+
+[dev-dependencies]
+rand = { version = "0.8", features = ["small_rng"] }
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "collections"
+harness = false
