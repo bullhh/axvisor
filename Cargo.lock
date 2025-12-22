@@ -76,23 +76,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "allocator"
-version = "0.1.2"
-dependencies = [
- "allocator",
- "axerrno 0.1.2",
- "axlog",
- "bitmap-allocator",
- "buddy_system_allocator",
- "cfg-if",
- "criterion",
- "log",
- "rand 0.8.5",
- "rlsf",
- "slab_allocator",
-]
-
-[[package]]
 name = "allocator-api2"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -340,9 +323,9 @@ dependencies = [
 name = "axalloc"
 version = "0.1.0"
 dependencies = [
- "allocator",
  "axbacktrace",
  "axerrno 0.2.2",
+ "axvisor-allocator",
  "cfg-if",
  "kspin",
  "log",
@@ -1121,6 +1104,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "axvisor-allocator"
+version = "0.1.0"
+dependencies = [
+ "axerrno 0.1.2",
+ "axlog",
+ "criterion",
+ "kspin",
+ "log",
+ "rand 0.8.5",
+]
+
+[[package]]
 name = "axvisor_api"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1273,15 +1268,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "812e12b5285cc515a9c72a5c1d3b6d46a19dac5acfef5265968c166106e31dd3"
 
 [[package]]
-name = "bitmap-allocator"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e11e01b72b2a40aab84454fb6b71090c2a6873e1b5ba22a8e3d74e83086a2304"
-dependencies = [
- "bit_field",
-]
-
-[[package]]
 name = "bitmaps"
 version = "3.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1330,12 +1316,6 @@ dependencies = [
  "quote",
  "syn 2.0.111",
 ]
-
-[[package]]
-name = "buddy_system_allocator"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7913f22349ffcfc6ca0ca9a656ec26cfbba538ed49c31a273dff2c5d1ea83d9"
 
 [[package]]
 name = "bumpalo"
@@ -5365,14 +5345,6 @@ name = "slab"
 version = "0.4.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a2ae44ef20feb57a68b23d846850f861394c2e02dc425a50098ae8c90267589"
-
-[[package]]
-name = "slab_allocator"
-version = "0.3.1"
-source = "git+https://github.com/arceos-org/slab_allocator.git?tag=v0.3.1#3c13499d664ccd36f66786985b753340aea57f5a"
-dependencies = [
- "buddy_system_allocator",
-]
 
 [[package]]
 name = "smallvec"
