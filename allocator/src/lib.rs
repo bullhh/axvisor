@@ -8,19 +8,13 @@
 //! - Per-CPU caching support (future)
 
 #![no_std]
-#![cfg_attr(feature = "allocator_api", feature(allocator_api))]
-#![feature(generic_const_exprs)]
 
 extern crate alloc;
 
-#[macro_use]
 extern crate axlog;
 
 use core::alloc::Layout;
 use core::ptr::NonNull;
-
-#[cfg(feature = "axerrno")]
-use axerrno::AxError;
 
 /// The error type used for allocation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,16 +27,6 @@ pub enum AllocError {
     NoMemory,
     /// Deallocate an unallocated memory region.
     NotAllocated,
-}
-
-#[cfg(feature = "axerrno")]
-impl From<AllocError> for AxError {
-    fn from(value: AllocError) -> Self {
-        match value {
-            AllocError::NoMemory => AxError::NoMemory,
-            _ => AxError::InvalidInput,
-        }
-    }
 }
 
 /// A [`Result`] type with [`AllocError`] as the error type.
@@ -81,20 +65,10 @@ pub trait PageAllocator: BaseAllocator {
     const PAGE_SIZE: usize;
 
     /// Allocate contiguous memory pages with given count and alignment.
-    fn alloc_pages(&mut self, num_pages: usize, align_pow2: usize) -> AllocResult<usize> {
-        self.alloc_pages_with_usage(num_pages, align_pow2, global_allocator::UsageKind::Other)
-    }
+    fn alloc_pages(&mut self, num_pages: usize, align_pow2: usize) -> AllocResult<usize>;
     
     /// Deallocate contiguous memory pages with given position and count.
-    fn dealloc_pages(&mut self, pos: usize, num_pages: usize) {
-        self.dealloc_pages_with_usage(pos, num_pages, global_allocator::UsageKind::Other)
-    }
-
-    /// Allocate contiguous memory pages with given count, alignment, and usage kind.
-    fn alloc_pages_with_usage(&mut self, num_pages: usize, align_pow2: usize, usage: global_allocator::UsageKind) -> AllocResult<usize>;
-
-    /// Deallocate contiguous memory pages with given position, count, and usage kind.
-    fn dealloc_pages_with_usage(&mut self, pos: usize, num_pages: usize, usage: global_allocator::UsageKind);
+    fn dealloc_pages(&mut self, pos: usize, num_pages: usize);
 
     /// Allocate contiguous memory pages with given base address, count and alignment.
     fn alloc_pages_at(
@@ -169,47 +143,11 @@ pub use slab_byte_allocator::{SlabByteAllocator, SizeClass, SlabMeta, PageAlloca
 pub mod global_allocator;
 pub use global_allocator::{GlobalAllocator, UsageStats};
 
-#[cfg(feature = "allocator_api")]
-mod allocator_api {
-    use super::ByteAllocator;
-    use alloc::rc::Rc;
-    use core::alloc::{AllocError, Allocator, Layout};
-    use core::cell::RefCell;
-    use core::ptr::NonNull;
-
-    /// A byte-allocator wrapped in [`Rc<RefCell>`] that implements [`core::alloc::Allocator`].
-    pub struct AllocatorRc<A: ByteAllocator>(Rc<RefCell<A>>);
-
-    impl<A: ByteAllocator> AllocatorRc<A> {
-        /// Creates a new allocator with the given memory pool.
-        pub fn new(mut inner: A, pool: &mut [u8]) -> Self {
-            inner.init(pool.as_mut_ptr() as usize, pool.len());
-            Self(Rc::new(RefCell::new(inner)))
-        }
-    }
-
-    unsafe impl<A: ByteAllocator> Allocator for AllocatorRc<A> {
-        fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-            match layout.size() {
-                0 => Ok(NonNull::slice_from_raw_parts(NonNull::dangling(), 0)),
-                size => {
-                    let raw_addr = self.0.borrow_mut().alloc(layout).map_err(|_| AllocError)?;
-                    Ok(NonNull::slice_from_raw_parts(raw_addr, size))
-                }
-            }
-        }
-
-        unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
-            self.0.borrow_mut().dealloc(ptr, layout)
-        }
-    }
-
-    impl<A: ByteAllocator> Clone for AllocatorRc<A> {
-        fn clone(&self) -> Self {
-            Self(self.0.clone())
-        }
-    }
-}
-
-#[cfg(feature = "allocator_api")]
-pub use allocator_api::AllocatorRc;
+pub mod tracking;
+pub use tracking::{
+    AllocationInfo, AllocationTag, AllocationStats, OverallStats,
+    enable_tracking, disable_tracking, is_tracking_enabled,
+    track_allocation, track_deallocation, get_overall_stats,
+    get_stats_by_tag, get_memory_leaks, print_memory_report,
+    reset_tracking,
+};

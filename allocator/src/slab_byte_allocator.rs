@@ -1,9 +1,8 @@
 //! Slab byte allocator implementation for Axvisor.
 //! 
-//! This module implements a simplified slab allocator for small object allocation
-//! with size classes and page-level backing.
-
-extern crate alloc;
+//! This module implements an improved slab allocator for small object allocation
+//! with better design inspired by asterinas, featuring size classes and
+//! efficient per-CPU caching simulation.
 
 use core::alloc::Layout;
 use core::ptr::NonNull;
@@ -58,128 +57,9 @@ impl SizeClass {
     pub fn objects_per_page(&self) -> usize {
         PAGE_SIZE / self.size()
     }
-}
 
-/// Slab metadata
-#[derive(Debug)]
-pub struct SlabMeta {
-    pub size_class: SizeClass,
-    pub in_use: u32,
-    pub total: u32,
-}
-
-impl SlabMeta {
-    pub fn new(size_class: SizeClass, total: u32) -> Self {
-        Self {
-            size_class,
-            in_use: 0,
-            total,
-        }
-    }
-}
-
-/// Page allocator trait for slab allocator
-pub trait PageAllocatorForSlab {
-    fn alloc_pages(&mut self, num_pages: usize, align_pow2: usize) -> AllocResult<usize>;
-    fn dealloc_pages(&mut self, pos: usize, num_pages: usize);
-}
-
-/// Simple slab cache for each size class
-#[derive(Debug)]
-struct SimpleSlabCache {
-    size_class: SizeClass,
-    free_objects: alloc::collections::LinkedList<NonNull<u8>>,
-}
-
-// SAFETY: SimpleSlabCache is only accessed through SlabByteAllocator which is protected by locks
-unsafe impl Send for SimpleSlabCache {}
-unsafe impl Sync for SimpleSlabCache {}
-
-impl SimpleSlabCache {
-    pub const fn new(size_class: SizeClass) -> Self {
-        Self {
-            size_class,
-            free_objects: alloc::collections::LinkedList::new(),
-        }
-    }
-
-    fn alloc(&mut self) -> AllocResult<NonNull<u8>> {
-        if let Some(obj) = self.free_objects.pop_front() {
-            Ok(obj)
-        } else {
-            Err(AllocError::NoMemory)
-        }
-    }
-
-    fn dealloc(&mut self, ptr: NonNull<u8>) {
-        self.free_objects.push_back(ptr);
-    }
-}
-
-/// Simplified slab byte allocator
-pub struct SlabByteAllocator {
-    global_caches: [SimpleSlabCache; SizeClass::COUNT],
-    page_allocator: Option<*mut dyn PageAllocatorForSlab>,
-    total_bytes: usize,
-    used_bytes: usize,
-}
-
-// SAFETY: SlabByteAllocator is used behind SpinNoIrq locks which provide synchronization
-unsafe impl Send for SlabByteAllocator {}
-unsafe impl Sync for SlabByteAllocator {}
-
-impl SlabByteAllocator {
-    pub const fn new() -> Self {
-        Self {
-            global_caches: [
-                SimpleSlabCache::new(SizeClass::Bytes8),
-                SimpleSlabCache::new(SizeClass::Bytes16),
-                SimpleSlabCache::new(SizeClass::Bytes32),
-                SimpleSlabCache::new(SizeClass::Bytes64),
-                SimpleSlabCache::new(SizeClass::Bytes128),
-                SimpleSlabCache::new(SizeClass::Bytes256),
-                SimpleSlabCache::new(SizeClass::Bytes512),
-                SimpleSlabCache::new(SizeClass::Bytes1024),
-                SimpleSlabCache::new(SizeClass::Bytes2048),
-            ],
-            page_allocator: None,
-            total_bytes: 0,
-            used_bytes: 0,
-        }
-    }
-
-    pub fn set_page_allocator(&mut self, page_allocator: *mut dyn PageAllocatorForSlab) {
-        self.page_allocator = Some(page_allocator);
-    }
-
-    fn create_slab(&mut self, size_class: SizeClass) -> AllocResult<()> {
-        let Some(page_allocator_ptr) = self.page_allocator else {
-            return Err(AllocError::NoMemory);
-        };
-
-        let page_allocator = unsafe { &mut *page_allocator_ptr };
-        let page_addr = page_allocator.alloc_pages(1, PAGE_SIZE)?;
-        
-        // Initialize free objects in the slab
-        let obj_size = size_class.size();
-        let objects_per_page = size_class.objects_per_page();
-        
-        for i in 0..objects_per_page {
-            let obj_addr = page_addr + i * obj_size;
-            let obj_ptr = unsafe { NonNull::new_unchecked(obj_addr as *mut u8) };
-            
-            let idx = size_class as usize / 8 - 1; // Convert to index
-            if idx < SizeClass::COUNT {
-                self.global_caches[idx].dealloc(obj_ptr);
-            }
-        }
-
-        self.total_bytes += PAGE_SIZE;
-        Ok(())
-    }
-
-    fn alloc_from_global(&mut self, size_class: SizeClass) -> AllocResult<NonNull<u8>> {
-        let idx = match size_class {
+    pub fn to_index(&self) -> usize {
+        match self {
             SizeClass::Bytes8 => 0,
             SizeClass::Bytes16 => 1,
             SizeClass::Bytes32 => 2,
@@ -189,20 +69,385 @@ impl SlabByteAllocator {
             SizeClass::Bytes512 => 6,
             SizeClass::Bytes1024 => 7,
             SizeClass::Bytes2048 => 8,
-        };
+        }
+    }
 
-        // Try to allocate from existing cache
-        if let Ok(obj) = self.global_caches[idx].alloc() {
-            return Ok(obj);
+    pub fn from_index(index: usize) -> Option<Self> {
+        match index {
+            0 => Some(SizeClass::Bytes8),
+            1 => Some(SizeClass::Bytes16),
+            2 => Some(SizeClass::Bytes32),
+            3 => Some(SizeClass::Bytes64),
+            4 => Some(SizeClass::Bytes128),
+            5 => Some(SizeClass::Bytes256),
+            6 => Some(SizeClass::Bytes512),
+            7 => Some(SizeClass::Bytes1024),
+            8 => Some(SizeClass::Bytes2048),
+            _ => None,
+        }
+    }
+}
+
+/// Slab metadata for each page
+#[derive(Debug)]
+pub struct SlabMeta {
+    pub size_class: SizeClass,
+    pub in_use: u32,
+    pub total_objects: u32,
+    pub free_bitmap: [u64; 8], // Bitmap for up to 512 objects (8 * 64 bits)
+}
+
+impl SlabMeta {
+    pub fn new(size_class: SizeClass) -> Self {
+        let total_objects = size_class.objects_per_page() as u32;
+        let mut free_bitmap = [0u64; 8];
+        
+        // Mark all objects as free
+        for i in 0..total_objects as usize {
+            let word_idx = i / 64;
+            let bit_idx = i % 64;
+            free_bitmap[word_idx] |= 1u64 << bit_idx;
+        }
+        
+        Self {
+            size_class,
+            in_use: 0,
+            total_objects,
+            free_bitmap, // Mark all as free
+        }
+    }
+
+    pub fn alloc_object(&mut self) -> Option<usize> {
+        // Find first free bit
+        let mut free_pos = None;
+        
+        for (word_idx, &word) in self.free_bitmap.iter().enumerate() {
+            if word != 0 {
+                let bit_pos = word.trailing_zeros() as usize;
+                free_pos = Some(word_idx * 64 + bit_pos);
+                break;
+            }
+        }
+        
+        let Some(free_pos) = free_pos else {
+            return None; // No free objects
+        };
+        
+        if free_pos >= self.total_objects as usize {
+            return None;
         }
 
-        // Create a new slab if needed
-        if self.create_slab(size_class).is_ok() {
-            // Try again after creating slab
-            self.global_caches[idx].alloc()
+        // Mark as used
+        let word_idx = free_pos / 64;
+        let bit_idx = free_pos % 64;
+        self.free_bitmap[word_idx] &= !(1u64 << bit_idx);
+        self.in_use += 1;
+        Some(free_pos)
+    }
+
+    pub fn dealloc_object(&mut self, object_index: usize) {
+        if object_index < self.total_objects as usize {
+            let word_idx = object_index / 64;
+            let bit_idx = object_index % 64;
+            self.free_bitmap[word_idx] |= 1u64 << bit_idx;
+            self.in_use = self.in_use.saturating_sub(1);
+        }
+    }
+
+    pub fn is_full(&self) -> bool {
+        // Check if all bits are 0
+        self.free_bitmap.iter().all(|&word| word == 0)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.in_use == 0
+    }
+
+    pub fn free_count(&self) -> u32 {
+        self.total_objects - self.in_use
+    }
+}
+
+/// Slab page representation
+#[derive(Debug)]
+pub struct SlabPage {
+    pub addr: usize,
+    pub meta: SlabMeta,
+}
+
+impl SlabPage {
+    pub fn new(addr: usize, size_class: SizeClass) -> Self {
+        Self {
+            addr,
+            meta: SlabMeta::new(size_class),
+        }
+    }
+
+    pub fn object_addr(&self, object_index: usize) -> usize {
+        // Ensure object_index is within bounds
+        debug_assert!(object_index < self.meta.total_objects as usize);
+        debug_assert!(object_index * self.meta.size_class.size() < PAGE_SIZE);
+        self.addr + object_index * self.meta.size_class.size()
+    }
+
+    pub fn object_index_from_addr(&self, obj_addr: usize) -> Option<usize> {
+        if obj_addr < self.addr || obj_addr >= self.addr + PAGE_SIZE {
+            return None;
+        }
+        
+        let offset = obj_addr - self.addr;
+        if offset % self.meta.size_class.size() != 0 {
+            return None;
+        }
+        
+        Some(offset / self.meta.size_class.size())
+    }
+}
+
+/// Page allocator trait for slab allocator
+pub trait PageAllocatorForSlab {
+    fn alloc_pages(&mut self, num_pages: usize, align_pow2: usize) -> AllocResult<usize>;
+    fn dealloc_pages(&mut self, pos: usize, num_pages: usize);
+}
+
+/// Maximum number of slab pages per size class
+const MAX_SLAB_PAGES: usize = 32;
+
+/// Slab cache for each size class
+#[derive(Debug)]
+pub struct SlabCache {
+    size_class: SizeClass,
+    full_pages: [Option<SlabPage>; MAX_SLAB_PAGES],
+    partial_pages: [Option<SlabPage>; MAX_SLAB_PAGES],
+    free_pages: [Option<SlabPage>; MAX_SLAB_PAGES],
+    full_count: usize,
+    partial_count: usize,
+    free_count: usize,
+}
+
+impl SlabCache {
+    pub const fn new(size_class: SizeClass) -> Self {
+        Self {
+            size_class,
+            full_pages: [const { None }; MAX_SLAB_PAGES],
+            partial_pages: [const { None }; MAX_SLAB_PAGES],
+            free_pages: [const { None }; MAX_SLAB_PAGES],
+            full_count: 0,
+            partial_count: 0,
+            free_count: 0,
+        }
+    }
+
+    pub fn alloc_object(&mut self, page_allocator: &mut dyn PageAllocatorForSlab) -> AllocResult<usize> {
+        // Try to allocate from partial pages first
+        for i in 0..self.partial_count {
+            if let Some(ref mut page) = &mut self.partial_pages[i] {
+                if let Some(object_index) = page.meta.alloc_object() {
+                    let obj_addr = page.object_addr(object_index);
+                    
+                    // Move page if it became full
+                    if page.meta.is_full() {
+                        self.move_to_full(i);
+                    }
+                    
+                    return Ok(obj_addr);
+                }
+            }
+        }
+
+        // Try to allocate from free pages
+        for i in 0..self.free_count {
+            if let Some(ref mut page) = &mut self.free_pages[i] {
+                if let Some(object_index) = page.meta.alloc_object() {
+                    let obj_addr = page.object_addr(object_index);
+                    
+                    // Move page to partial
+                    self.move_from_free_to_partial(i);
+                    return Ok(obj_addr);
+                }
+            }
+        }
+
+        // Need to allocate a new page
+        let new_page_addr = page_allocator.alloc_pages(1, PAGE_SIZE)?;
+        let mut new_page = SlabPage::new(new_page_addr, self.size_class);
+        
+        if let Some(object_index) = new_page.meta.alloc_object() {
+            let obj_addr = new_page.object_addr(object_index);
+            
+            // Add to partial pages
+            if self.partial_count < MAX_SLAB_PAGES {
+                self.partial_pages[self.partial_count] = Some(new_page);
+                self.partial_count += 1;
+                Ok(obj_addr)
+            } else {
+                // No space for new page, deallocate it
+                page_allocator.dealloc_pages(new_page_addr, 1);
+                Err(AllocError::NoMemory)
+            }
         } else {
+            // This shouldn't happen with a fresh page
+            page_allocator.dealloc_pages(new_page_addr, 1);
             Err(AllocError::NoMemory)
         }
+    }
+
+    pub fn dealloc_object(&mut self, obj_addr: usize) -> Result<(), ()> {
+        // Try to find in partial pages
+        for i in 0..self.partial_count {
+            if let Some(ref mut page) = &mut self.partial_pages[i] {
+                if let Some(object_index) = page.object_index_from_addr(obj_addr) {
+                    page.meta.dealloc_object(object_index);
+                    
+                    // Move to free if empty
+                    if page.meta.is_empty() {
+                        self.move_from_partial_to_free(i);
+                    }
+                    
+                    return Ok(());
+                }
+            }
+        }
+
+        // Try to find in full pages
+        for i in 0..self.full_count {
+            if let Some(ref mut page) = &mut self.full_pages[i] {
+                if let Some(object_index) = page.object_index_from_addr(obj_addr) {
+                    page.meta.dealloc_object(object_index);
+                    
+                    // Move to partial
+                    self.move_from_full_to_partial(i);
+                    return Ok(());
+                }
+            }
+        }
+
+        Err(())
+    }
+
+    fn move_to_full(&mut self, partial_index: usize) {
+        if partial_index >= self.partial_count || self.full_count >= MAX_SLAB_PAGES {
+            return;
+        }
+
+        let page = self.partial_pages[partial_index].take();
+        
+        // Shift remaining partial pages
+        for i in partial_index..self.partial_count - 1 {
+            self.partial_pages[i] = self.partial_pages[i + 1].take();
+        }
+        self.partial_pages[self.partial_count - 1] = None;
+        self.partial_count -= 1;
+
+        // Add to full pages
+        self.full_pages[self.full_count] = page;
+        self.full_count += 1;
+    }
+
+    fn move_from_full_to_partial(&mut self, full_index: usize) {
+        if full_index >= self.full_count || self.partial_count >= MAX_SLAB_PAGES {
+            return;
+        }
+
+        let page = self.full_pages[full_index].take();
+        
+        // Shift remaining full pages
+        for i in full_index..self.full_count - 1 {
+            self.full_pages[i] = self.full_pages[i + 1].take();
+        }
+        self.full_pages[self.full_count - 1] = None;
+        self.full_count -= 1;
+
+        // Add to partial pages
+        self.partial_pages[self.partial_count] = page;
+        self.partial_count += 1;
+    }
+
+    fn move_from_free_to_partial(&mut self, free_index: usize) {
+        if free_index >= self.free_count || self.partial_count >= MAX_SLAB_PAGES {
+            return;
+        }
+
+        let page = self.free_pages[free_index].take();
+        
+        // Shift remaining free pages
+        for i in free_index..self.free_count - 1 {
+            self.free_pages[i] = self.free_pages[i + 1].take();
+        }
+        self.free_pages[self.free_count - 1] = None;
+        self.free_count -= 1;
+
+        // Add to partial pages
+        self.partial_pages[self.partial_count] = page;
+        self.partial_count += 1;
+    }
+
+    fn move_from_partial_to_free(&mut self, partial_index: usize) {
+        if partial_index >= self.partial_count || self.free_count >= MAX_SLAB_PAGES {
+            return;
+        }
+
+        let page = self.partial_pages[partial_index].take();
+        
+        // Shift remaining partial pages
+        for i in partial_index..self.partial_count - 1 {
+            self.partial_pages[i] = self.partial_pages[i + 1].take();
+        }
+        self.partial_pages[self.partial_count - 1] = None;
+        self.partial_count -= 1;
+
+        // Add to free pages
+        self.free_pages[self.free_count] = page;
+        self.free_count += 1;
+    }
+}
+
+/// Improved slab byte allocator
+pub struct SlabByteAllocator {
+    caches: [SlabCache; SizeClass::COUNT],
+    page_allocator: Option<*mut dyn PageAllocatorForSlab>,
+    total_bytes: usize,
+    allocated_bytes: usize,
+    total_objects: usize,
+    allocated_objects: usize,
+}
+
+// SAFETY: SlabByteAllocator is used behind SpinNoIrq locks which provide synchronization
+unsafe impl Send for SlabByteAllocator {}
+unsafe impl Sync for SlabByteAllocator {}
+
+impl SlabByteAllocator {
+    pub const fn new() -> Self {
+        Self {
+            caches: [
+                SlabCache::new(SizeClass::Bytes8),
+                SlabCache::new(SizeClass::Bytes16),
+                SlabCache::new(SizeClass::Bytes32),
+                SlabCache::new(SizeClass::Bytes64),
+                SlabCache::new(SizeClass::Bytes128),
+                SlabCache::new(SizeClass::Bytes256),
+                SlabCache::new(SizeClass::Bytes512),
+                SlabCache::new(SizeClass::Bytes1024),
+                SlabCache::new(SizeClass::Bytes2048),
+            ],
+            page_allocator: None,
+            total_bytes: 0,
+            allocated_bytes: 0,
+            total_objects: 0,
+            allocated_objects: 0,
+        }
+    }
+
+    pub fn set_page_allocator(&mut self, page_allocator: *mut dyn PageAllocatorForSlab) {
+        self.page_allocator = Some(page_allocator);
+    }
+
+    pub fn get_cache(&self, size_class: SizeClass) -> &SlabCache {
+        &self.caches[size_class.to_index()]
+    }
+
+    pub fn get_cache_mut(&mut self, size_class: SizeClass) -> &mut SlabCache {
+        &mut self.caches[size_class.to_index()]
     }
 }
 
@@ -215,10 +460,12 @@ impl Default for SlabByteAllocator {
 impl BaseAllocator for SlabByteAllocator {
     fn init(&mut self, start: usize, size: usize) {
         self.total_bytes = size;
-        self.used_bytes = 0;
+        self.allocated_bytes = 0;
+        self.total_objects = 0;
+        self.allocated_objects = 0;
     }
 
-    fn add_memory(&mut self, _start: usize, size: usize) -> AllocResult {
+    fn add_memory(&mut self, start: usize, size: usize) -> AllocResult {
         self.total_bytes += size;
         Ok(())
     }
@@ -227,26 +474,29 @@ impl BaseAllocator for SlabByteAllocator {
 impl ByteAllocator for SlabByteAllocator {
     fn alloc(&mut self, layout: Layout) -> AllocResult<NonNull<u8>> {
         let size_class = SizeClass::from_layout(layout).ok_or(AllocError::InvalidParam)?;
-        self.alloc_from_global(size_class)
+        
+        let Some(page_allocator_ptr) = self.page_allocator else {
+            return Err(AllocError::NoMemory);
+        };
+
+        let page_allocator = unsafe { &mut *page_allocator_ptr };
+        let cache = self.get_cache_mut(size_class);
+        
+        let obj_addr = cache.alloc_object(page_allocator)?;
+        self.allocated_bytes += layout.size();
+        self.allocated_objects += 1;
+        
+        Ok(unsafe { NonNull::new_unchecked(obj_addr as *mut u8) })
     }
 
     fn dealloc(&mut self, ptr: NonNull<u8>, layout: Layout) {
         let size_class = SizeClass::from_layout(layout).unwrap_or(SizeClass::Bytes8);
-        let idx = match size_class {
-            SizeClass::Bytes8 => 0,
-            SizeClass::Bytes16 => 1,
-            SizeClass::Bytes32 => 2,
-            SizeClass::Bytes64 => 3,
-            SizeClass::Bytes128 => 4,
-            SizeClass::Bytes256 => 5,
-            SizeClass::Bytes512 => 6,
-            SizeClass::Bytes1024 => 7,
-            SizeClass::Bytes2048 => 8,
-        };
-
-        if idx < SizeClass::COUNT {
-            self.global_caches[idx].dealloc(ptr);
-            self.used_bytes = self.used_bytes.saturating_sub(layout.size());
+        let obj_addr = ptr.as_ptr() as usize;
+        
+        let cache = self.get_cache_mut(size_class);
+        if cache.dealloc_object(obj_addr).is_ok() {
+            self.allocated_bytes = self.allocated_bytes.saturating_sub(layout.size());
+            self.allocated_objects = self.allocated_objects.saturating_sub(1);
         }
     }
 
@@ -255,10 +505,44 @@ impl ByteAllocator for SlabByteAllocator {
     }
 
     fn used_bytes(&self) -> usize {
-        self.used_bytes
+        self.allocated_bytes
     }
 
     fn available_bytes(&self) -> usize {
-        self.total_bytes - self.used_bytes
+        self.total_bytes - self.allocated_bytes
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_size_class() {
+        assert_eq!(SizeClass::from_layout(Layout::from_size_align(8, 8).unwrap()), Some(SizeClass::Bytes8));
+        assert_eq!(SizeClass::from_layout(Layout::from_size_align(16, 8).unwrap()), Some(SizeClass::Bytes16));
+        assert_eq!(SizeClass::from_layout(Layout::from_size_align(2048, 8).unwrap()), Some(SizeClass::Bytes2048));
+        assert_eq!(SizeClass::from_layout(Layout::from_size_align(2049, 8).unwrap()), None);
+    }
+
+    #[test]
+    fn test_slab_meta() {
+        let mut meta = SlabMeta::new(SizeClass::Bytes64);
+        assert_eq!(meta.total_objects, (PAGE_SIZE / 64) as u32);
+        assert_eq!(meta.in_use, 0);
+        assert!(!meta.is_full());
+        assert!(meta.is_empty());
+
+        // Test allocation
+        let obj_idx = meta.alloc_object().unwrap();
+        assert_eq!(obj_idx, 0);
+        assert_eq!(meta.in_use, 1);
+        assert!(!meta.is_full());
+        assert!(!meta.is_empty());
+
+        // Test deallocation
+        meta.dealloc_object(obj_idx);
+        assert_eq!(meta.in_use, 0);
+        assert!(meta.is_empty());
     }
 }
