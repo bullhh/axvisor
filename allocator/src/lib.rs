@@ -137,6 +137,9 @@ const fn is_aligned(base_addr: usize, align: usize) -> bool {
 pub mod buddy_page_allocator;
 pub use buddy_page_allocator::{BuddyPageAllocator, BuddyStats, MemoryRegion};
 
+pub mod page_allocator;
+pub use page_allocator::{CompositePageAllocator, CompositeStats};
+
 pub mod slab_byte_allocator;
 pub use slab_byte_allocator::{SlabByteAllocator, SizeClass, SlabMeta, PageAllocatorForSlab};
 
