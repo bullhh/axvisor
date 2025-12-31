@@ -139,23 +139,37 @@ impl GlobalAllocator {
 
         // Use buddy allocator for large objects
         let pages_needed = (layout.size() + PAGE_SIZE - 1) / PAGE_SIZE;
-        info!("global allocator: Allocating {} bytes with alignment {}", layout.size(), layout.align());
-        
-        // Print detailed memory information before allocation
-        // let stats_before = self.get_stats();
-        // let buddy_stats_before = self.get_buddy_stats();
-        // info!("global allocator: Memory state before allocation:");
-        // info!("  Total pages: {}, Used pages: {}, Free pages: {}", 
-        //     stats_before.total_pages, stats_before.used_pages, stats_before.free_pages);
-        // info!("  Slab bytes: {}, Heap bytes: {}", stats_before.slab_bytes, stats_before.heap_bytes);
-        // info!("  Buddy free blocks by order:");
-        // for (order, &count) in buddy_stats_before.free_pages_by_order.iter().enumerate() {
-        //     if count > 0 {
-        //         info!("    Order {}: {} blocks ({} KB each)", 
-        //             order, count, ((1 << order) * PAGE_SIZE) / 1024);
-        //     }
-        // }
-        
+        // info!("global allocator: Allocating {} bytes with alignment {}", layout.size(), layout.align());
+
+        // Print memory state before allocation for large allocations
+        if layout.size() > 1024 * 1024 { // > 1MB
+            let stats_before = self.get_stats();
+            info!("global allocator: Memory state before allocation:");
+            info!("  Requested: {} bytes ({} MB, {} pages)",
+                   layout.size(),
+                   layout.size() / (1024 * 1024),
+                   pages_needed);
+            info!("  Total pages: {} ({} MB)",
+                   stats_before.total_pages,
+                   (stats_before.total_pages * PAGE_SIZE) / (1024 * 1024));
+            info!("  Free pages: {} ({} MB)",
+                   stats_before.free_pages,
+                   (stats_before.free_pages * PAGE_SIZE) / (1024 * 1024));
+            info!("  Used pages: {} ({} MB)",
+                   stats_before.used_pages,
+                   (stats_before.used_pages * PAGE_SIZE) / (1024 * 1024));
+
+            let buddy_stats = self.get_buddy_stats();
+            info!("  Buddy free blocks by order:");
+            for (order, &count) in buddy_stats.free_pages_by_order.iter().enumerate() {
+                if count > 0 {
+                    let size_mb = ((1 << order) * PAGE_SIZE) / (1024 * 1024);
+                    info!("    Order {}: {} blocks ({} MB each, {} MB total)",
+                           order, count, size_mb, size_mb * count);
+                }
+            }
+        }
+
         let addr = PageAllocator::alloc_pages(&mut *self.buddy_allocator.lock(), pages_needed, layout.align())?;
         let ptr = unsafe { NonNull::new_unchecked(addr as *mut u8) };
 
@@ -165,23 +179,13 @@ impl GlobalAllocator {
             stats.free_pages -= pages_needed;
             stats.heap_bytes += layout.size();
         }
-        
-        // Print detailed memory information after allocation
-        // let stats_after = self.get_stats();
-        // let buddy_stats_after = self.get_buddy_stats();
-        // info!("global allocator: Memory state after allocation:");
-        // info!("  Total pages: {}, Used pages: {}, Free pages: {}", 
-        //     stats_after.total_pages, stats_after.used_pages, stats_after.free_pages);
-        // info!("  Slab bytes: {}, Heap bytes: {}", stats_after.slab_bytes, stats_after.heap_bytes);
-        // info!("  Allocated {} pages at address {:#x}", pages_needed, addr);
-        // info!("  Buddy free blocks by order after allocation:");
-        // for (order, &count) in buddy_stats_after.free_pages_by_order.iter().enumerate() {
-        //     if count > 0 {
-        //         info!("    Order {}: {} blocks ({} KB each)", 
-        //             order, count, ((1 << order) * PAGE_SIZE) / 1024);
-        //     }
-        // }
-        
+
+        // Print allocation success info for large allocations
+        if layout.size() > 1024 * 1024 { // > 1MB
+            info!("global allocator: Successfully allocated {} pages at {:#x} ({} MB)",
+                   pages_needed, addr, (pages_needed * PAGE_SIZE) / (1024 * 1024));
+        }
+
         track_allocation(ptr, layout, AllocationTag::Buddy);
         Ok(ptr)
     }
@@ -192,7 +196,7 @@ impl GlobalAllocator {
             return Err(AllocError::NoMemory);
         }
         
-        info!("global allocator: Allocating {} pages with alignment {}", num_pages, align_pow2);
+        // info!("global allocator: Allocating {} pages with alignment {}", num_pages, align_pow2);
         
         let addr = PageAllocator::alloc_pages(&mut *self.buddy_allocator.lock(), num_pages, align_pow2)?;
         
@@ -205,8 +209,6 @@ impl GlobalAllocator {
 
         Ok(addr)
     }
-
-
 
     /// Deallocate memory
     pub fn dealloc(&self, ptr: NonNull<u8>, layout: Layout) {
@@ -224,7 +226,7 @@ impl GlobalAllocator {
             track_deallocation(ptr);
             return;
         }
-        info!("global allocator: Deallocating {:?} with alignment {}", ptr, layout.align());
+        // info!("global allocator: Deallocating {:?} with alignment {}", ptr, layout.align());
         // Fall back to buddy deallocation
         let pages_needed = (layout.size() + PAGE_SIZE - 1) / PAGE_SIZE;
         PageAllocator::dealloc_pages(&mut *self.buddy_allocator.lock(), ptr.as_ptr() as usize, pages_needed);
@@ -242,7 +244,7 @@ impl GlobalAllocator {
         if !self.initialized.load(Ordering::SeqCst) {
             return;
         }
-        info!("global allocator: Deallocating {} pages at address {:#x}", num_pages, pos);
+        // info!("global allocator: Deallocating {} pages at address {:#x}", num_pages, pos);
         
         PageAllocator::dealloc_pages(&mut *self.buddy_allocator.lock(), pos, num_pages);
 
