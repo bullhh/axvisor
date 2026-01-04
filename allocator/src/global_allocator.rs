@@ -10,8 +10,8 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, Ordering};
 use crate::{AllocError, AllocResult, BaseAllocator, PageAllocator, ByteAllocator};
 
-use super::buddy_page_allocator::BuddyStats;
-use super::page_allocator::{CompositePageAllocator, CompositeStats};
+use super::buddy::BuddyStats;
+use super::page_allocator::CompositePageAllocator;
 use super::slab_byte_allocator::{SlabByteAllocator, PageAllocatorForSlab};
 use super::tracking::{track_allocation, track_deallocation, AllocationTag};
 use kspin::SpinNoIrq;
@@ -271,11 +271,6 @@ impl GlobalAllocator {
     /// Get buddy allocator statistics
     pub fn get_buddy_stats(&self) -> BuddyStats {
         self.page_allocator.lock().get_buddy_stats()
-    }
-
-    /// Get composite allocation statistics
-    pub fn get_composite_stats(&self) -> CompositeStats {
-        self.page_allocator.lock().get_composite_stats()
     }
 
     /// Get detailed free list information as a string

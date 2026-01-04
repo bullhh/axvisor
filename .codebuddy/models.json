@@ -1,0 +1,14 @@
+{
+  "models": [
+    {
+      "id": "glm-4.7",
+      "name": "My:",
+      "url": "https://open.bigmodel.cn/api/coding/paas/v4/chat/completions",
+      "apiKey": "9a340643ae394cd0b101223d71d2fdc6.UwpeE94QWFZklMzS",
+      "maxInputTokens": 320000,
+      "maxOutputTokens": 8192,
+      "supportsToolCall": true,
+      "supportsImages": false
+    }
+  ]
+}

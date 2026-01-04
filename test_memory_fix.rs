@@ -1,6 +1,6 @@
 //! Test to verify the memory allocator fix
 
-use allocator::buddy_page_allocator::{BuddyPageAllocator, PageAllocator};
+use allocator::{BuddyPageAllocator, PageAllocator};
 
 fn main() {
     println!("Testing multi-memory region support...");

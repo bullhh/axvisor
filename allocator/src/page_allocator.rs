@@ -1,338 +1,231 @@
-//! Page allocator with composite allocation support.
+//! Page allocator with contiguous block combination support.
 //!
-//! This module implements a page allocator that can handle arbitrary-sized allocations
-//! by combining multiple buddy blocks when standard buddy allocation is not possible.
-//! This addresses the issue where a single large allocation cannot be satisfied
-//! due to buddy system's power-of-2 constraint, even when sufficient total memory exists.
-//!
-//! # Design
-//!
-//! The allocator uses a two-tier strategy:
+//! This module implements a page allocator that guarantees contiguous physical memory
+//! allocations. It uses a two-tier strategy:
 //! 1. **Standard allocation**: First attempt to allocate using the buddy allocator
 //!    for power-of-2 sized requests
-//! 2. **Composite allocation**: If standard allocation fails, decompose the request
-//!    into multiple power-of-2 blocks and combine them
+//! 2. **Contiguous block combination**: If standard allocation fails, try to find
+//!    contiguous small blocks that can satisfy the request
 //!
 //! # Example
 //!
 //! ```ignore
-//! // Request 1536MB (not a power of 2)
-//! // If buddy has 2x1024MB blocks:
-//! // - Standard allocation fails (need 2048MB for Order 19)
-//! // - Composite allocation succeeds: 1x1024MB + 1x512MB = 1536MB
+//! // Request 1536 pages (6MB, not a power of 2)
+//! // If buddy has contiguous 1024-page + 512-page blocks:
+//! // - Standard allocation fails (need 2048 pages for Order 11)
+//! // - Contiguous blocks: check if 1024 pages + 512 pages are contiguous
+//! // - Allocation succeeds only if blocks are physically contiguous
 //! ```
 
 use crate::{AllocError, AllocResult, PageAllocator, BaseAllocator};
-use crate::buddy_page_allocator::BuddyPageAllocator;
+use crate::buddy::BuddyPageAllocator;
 use log::{debug, info, warn};
 
-/// Maximum number of concurrent composite allocations
-const MAX_COMPOSITE_ALLOCS: usize = 64;
-
-/// Maximum number of buddy blocks in a single composite allocation
+/// Maximum number of buddy blocks in a single contiguous allocation
 const MAX_PARTS_PER_ALLOC: usize = 8;
 
 /// Page size (4KB)
 const PAGE_SIZE: usize = 0x1000;
 
-/// Composite allocation metadata
-///
-/// Tracks a composite allocation that consists of multiple buddy blocks.
-/// When deallocating, all constituent blocks must be freed.
-#[derive(Clone, Copy)]
-struct CompositeAllocation {
-    /// Base address of the composite allocation
-    base_addr: usize,
-    /// Total number of pages in this composite allocation
-    total_pages: usize,
-    /// Constituent buddy blocks: (physical_address, order)
-    parts: [(usize, u32); MAX_PARTS_PER_ALLOC],
-    /// Number of valid entries in parts array
-    num_parts: u8,
-    /// Whether this slot is in use
-    used: bool,
-}
-
-impl CompositeAllocation {
-    /// Create a new unused composite allocation slot
-    const fn new_unused() -> Self {
-        Self {
-            base_addr: 0,
-            total_pages: 0,
-            parts: [(0, 0); MAX_PARTS_PER_ALLOC],
-            num_parts: 0,
-            used: false,
-        }
-    }
-}
-
-/// Page allocator with composite allocation support.
+/// Page allocator with contiguous block combination support.
 ///
 /// This allocator extends the buddy system to handle arbitrary-sized allocations
-/// by combining multiple buddy blocks when a single contiguous block of the
-/// requested size is not available.
+/// while guaranteeing physical contiguity.
 ///
 /// # Why Not Directly Modifying BuddyPageAllocator?
 ///
 /// - **Separation of concerns**: Buddy allocator should focus on the core buddy algorithm
-/// - **Maintainability**: Composite allocation logic is independent and easier to test
+/// - **Maintainability**: Contiguous allocation logic is independent and easier to test
 /// - **Flexibility**: Can replace buddy allocator with other implementations
 /// - **Layering**: Allows adding VM layer or other optimizations later
 ///
 /// # Allocation Strategy
 ///
 /// 1. For power-of-2 sized requests: Try standard buddy allocation first
-/// 2. For non-power-of-2 or failed allocations: Decompose into power-of-2 blocks
-/// 3. Greedy algorithm: Use largest possible blocks first to minimize fragmentation
+/// 2. For non-power-of-2 or failed allocations: Try to combine contiguous blocks
 pub struct CompositePageAllocator {
     /// Underlying buddy allocator for standard allocations
     buddy: BuddyPageAllocator,
-    /// Static array tracking composite allocations (no dynamic allocation)
-    composite_allocs: [CompositeAllocation; MAX_COMPOSITE_ALLOCS],
 }
 
 impl CompositePageAllocator {
-    /// Create a new composite page allocator
+    /// Create a new page allocator with contiguous block support
     pub const fn new() -> Self {
         Self {
             buddy: BuddyPageAllocator::new(),
-            composite_allocs: [CompositeAllocation::new_unused(); MAX_COMPOSITE_ALLOCS],
         }
     }
 
-    /// Initialize the composite allocator
+    /// Try to find and allocate contiguous small blocks from buddy free lists.
     ///
-    /// Initializes the buddy allocator and resets composite allocation tracking.
-    /// The composite allocation slots are already initialized via default().
-    fn init_composite(&mut self) {
-        // Reset all composite allocation slots
-        for slot in &mut self.composite_allocs {
-            *slot = CompositeAllocation::new_unused();
-        }
-        debug!("CompositePageAllocator initialized");
-    }
-
-    /// Find a free slot in the composite allocation array
-    fn find_free_slot(&self) -> Option<usize> {
-        for i in 0..MAX_COMPOSITE_ALLOCS {
-            if !self.composite_allocs[i].used {
-                return Some(i);
-            }
-        }
-        warn!("No free composite allocation slots available");
-        None
-    }
-
-    /// Find a composite allocation slot by base address
-    fn find_slot_by_addr(&self, base_addr: usize) -> Option<usize> {
-        for i in 0..MAX_COMPOSITE_ALLOCS {
-            if self.composite_allocs[i].used && self.composite_allocs[i].base_addr == base_addr {
-                return Some(i);
-            }
-        }
-        None
-    }
-
-    /// Find optimal buddy block orders to satisfy a page allocation request.
+    /// This method searches buddy free lists for contiguous blocks that can satisfy
+    /// the allocation request. It uses the sorted nature of free lists to efficiently
+    /// check for contiguity.
     ///
-    /// Uses a greedy algorithm to find the largest possible blocks first,
-    /// minimizing the number of parts and potential fragmentation.
-    ///
-    /// # Arguments
-    /// * `num_pages` - Number of pages requested
+    /// # Algorithm
+    /// 1. Iterate through free lists from largest to smallest blocks
+    /// 2. For each block, check if it's contiguous with already collected blocks
+    /// 3. Collect contiguous blocks until we have enough pages
+    /// 4. If successful, allocate all collected blocks
     ///
     /// # Returns
-    /// Array of buddy orders and the count of parts
-    fn find_best_orders(&self, num_pages: usize) -> Result<([u32; MAX_PARTS_PER_ALLOC], usize), AllocError> {
-        let mut orders = [0u32; MAX_PARTS_PER_ALLOC];
-        let mut remaining = num_pages;
-        let mut count = 0;
+    /// Base address of the first block if contiguous blocks found, otherwise None
+    fn try_combine_contiguous_blocks(&mut self, num_pages: usize, align_pow2: usize) -> Option<usize> {
+        let mut remaining_pages = num_pages;
+        let mut contiguous_blocks: [(usize, u32); MAX_PARTS_PER_ALLOC] = [(0, 0); MAX_PARTS_PER_ALLOC];
+        let mut block_count = 0;
+        let mut min_addr = usize::MAX;
+        let mut max_addr = 0;
 
-        // Greedy algorithm: try largest blocks first (from order 18 down to 0)
-        // Order 18 = 512MB, Order 0 = 4KB
+        // Iterate from largest to smallest blocks (order 18 down to 0)
         for order in (0..=18).rev() {
             let block_pages = 1usize << order;
-            
-            while remaining >= block_pages && count < MAX_PARTS_PER_ALLOC {
-                orders[count] = order as u32;
-                remaining -= block_pages;
-                count += 1;
 
-                if remaining == 0 {
+            if remaining_pages == 0 || block_count >= MAX_PARTS_PER_ALLOC {
+                break;
+            }
+
+            // Get free blocks of this order from all zones
+            for zone_id in 0..self.buddy.get_zone_count() {
+                if let Some(blocks) = self.buddy.get_free_blocks_by_order(zone_id, order) {
+                    // Iterate through sorted free blocks
+                    for block in blocks {
+                        if block_count >= MAX_PARTS_PER_ALLOC {
+                            break;
+                        }
+
+                        let block_start = block.addr;
+                        let block_end = block_start + block_pages * PAGE_SIZE;
+
+                        // Check alignment requirement
+                        if !crate::is_aligned(block_start, 1usize << align_pow2) {
+                            continue;
+                        }
+
+                        // Check contiguity with existing blocks
+                        if block_count == 0 {
+                            // First block - just record it
+                            contiguous_blocks[block_count] = (block_start, order as u32);
+                            min_addr = block_start;
+                            max_addr = block_end;
+                            block_count += 1;
+                            remaining_pages -= block_pages.min(remaining_pages);
+                        } else {
+                            // Check if this block is contiguous with the range
+                            // Can be before min_addr (contiguous from left)
+                            // or after max_addr (contiguous from right)
+                            if block_end == min_addr {
+                                // Block is to the left, update min_addr
+                                contiguous_blocks[block_count] = (block_start, order as u32);
+                                min_addr = block_start;
+                                block_count += 1;
+                                remaining_pages -= block_pages.min(remaining_pages);
+                            } else if block_start == max_addr {
+                                // Block is to the right, update max_addr
+                                contiguous_blocks[block_count] = (block_start, order as u32);
+                                max_addr = block_end;
+                                block_count += 1;
+                                remaining_pages -= block_pages.min(remaining_pages);
+                            }
+                        }
+
+                        if remaining_pages == 0 {
+                            break;
+                        }
+                    }
+                }
+
+                if remaining_pages == 0 {
                     break;
                 }
             }
-
-            if remaining == 0 {
-                break;
-            }
         }
 
-        if remaining > 0 {
-            return Err(AllocError::NoMemory);
-        }
+        // If we found enough contiguous pages, allocate them
+        if remaining_pages == 0 {
+            info!("=== Contiguous Block Allocation ===");
+            info!("Found {} contiguous blocks for {} pages request", block_count, num_pages);
+            info!("Address range: [{:#x}, {:#x})", min_addr, max_addr);
+            info!("Total size: {} MB", (max_addr - min_addr) / (1024 * 1024));
 
-        debug!("Decomposed {} pages into {} buddy blocks: {:?}", num_pages, count, &orders[..count]);
-        Ok((orders, count))
-    }
+            let mut parts = [(0usize, 0u32); MAX_PARTS_PER_ALLOC];
 
-    /// Allocate using composite strategy.
-    ///
-    /// When standard buddy allocation fails, this method decomposes the request
-    /// into multiple power-of-2 blocks and allocates them individually.
-    ///
-    /// # Algorithm
-    /// 1. Find optimal buddy block orders using greedy decomposition
-    /// 2. Allocate each block using buddy allocator
-    /// 3. If any allocation fails, rollback all previously allocated blocks
-    /// 4. Record the composite allocation for later deallocation
-    ///
-    /// # Arguments
-    /// * `num_pages` - Number of pages requested
-    /// * `align_pow2` - Alignment requirement (power of 2)
-    ///
-    /// # Returns
-    /// Base address of the first allocated block on success
-    fn alloc_composite(&mut self, num_pages: usize, align_pow2: usize) -> AllocResult<usize> {
-        let (orders, num_parts) = self.find_best_orders(num_pages)?;
+            // Allocate all contiguous blocks
+            for i in 0..block_count {
+                let (addr, order) = contiguous_blocks[i];
+                let block_pages = 1usize << order;
+                let block_size_mb = (block_pages * PAGE_SIZE) / (1024 * 1024);
 
-        // Find a free slot for tracking
-        let slot_idx = self.find_free_slot()
-            .ok_or(AllocError::NoMemory)?;
+                info!("Block {}: addr={:#x}, order={}, pages={}, size={} MB",
+                      i, addr, order, block_pages, block_size_mb);
 
-        let mut parts = [(0usize, 0u32); MAX_PARTS_PER_ALLOC];
-        let mut base_addr = None;
-        let mut allocated_count = 0;
-
-        // Allocate all constituent blocks
-        for i in 0..num_parts {
-            let order = orders[i];
-            let block_pages = 1usize << order;
-            
-            // Calculate alignment requirement for this block
-            // The block must be aligned to its size (2^order * PAGE_SIZE)
-            let block_align = block_pages * PAGE_SIZE;
-            let required_align = align_pow2.max(block_align);
-            let align_order = required_align.ilog2() as usize;
-
-            // Allocate using buddy allocator
-            let addr = self.buddy.alloc_pages(block_pages, align_order)
-                .map_err(|e| {
-                    // Allocation failed, rollback all previously allocated blocks
-                    warn!("Composite allocation failed at part {}, rolling back", i);
-                    for j in 0..allocated_count {
+                // Allocate this specific block
+                if let Err(_e) = self.buddy.alloc_pages_at(addr, block_pages, align_pow2) {
+                    // Allocation failed, rollback
+                    warn!("Contiguous block allocation failed at {}, rolling back", i);
+                    for j in 0..i {
                         let (dealloc_addr, dealloc_order) = parts[j];
                         let dealloc_pages = 1usize << dealloc_order;
-                        debug!("Rollback: deallocating addr={:#x}, pages={}", dealloc_addr, dealloc_pages);
                         self.buddy.dealloc_pages(dealloc_addr, dealloc_pages);
                     }
-                    e
-                })?;
+                    return None;
+                }
 
-            parts[allocated_count] = (addr, order);
-            
-            if base_addr.is_none() {
-                base_addr = Some(addr);
+                parts[i] = (addr, order);
             }
 
-            debug!("Composite part {}: addr={:#x}, order={}, pages={}", 
-                    allocated_count, addr, order, block_pages);
-            
-            allocated_count += 1;
+            // Assertion: allocated pages must be >= requested pages
+            let actual_pages: usize = parts[..block_count].iter()
+                .map(|(_, order)| 1usize << *order as usize)
+                .sum();
+            debug_assert!(actual_pages >= num_pages,
+                         "Allocated pages {} < requested pages {}",
+                         actual_pages, num_pages);
+
+            info!("Contiguous block allocation succeeded: base_addr={:#x}, pages={}, parts={}, actual_pages={}",
+                  min_addr, num_pages, block_count, actual_pages);
+
+            return Some(min_addr);
         }
 
-        // Save composite allocation metadata
-        self.composite_allocs[slot_idx] = CompositeAllocation {
-            base_addr: base_addr.unwrap(),
-            total_pages: num_pages,
-            parts,
-            num_parts: allocated_count as u8,
-            used: true,
-        };
-
-        info!("Composite allocation succeeded: base_addr={:#x}, pages={}, parts={}", 
-              base_addr.unwrap(), num_pages, allocated_count);
-
-        Ok(base_addr.unwrap())
+        None
     }
 
-    /// Deallocate a composite allocation.
+    /// Print detailed statistics when allocation fails.
     ///
-    /// Frees all constituent buddy blocks of a composite allocation.
-    ///
-    /// # Arguments
-    /// * `base_addr` - Base address of the composite allocation
-    ///
-    /// # Returns
-    /// Number of pages freed, or None if not found
-    fn dealloc_composite(&mut self, base_addr: usize) -> Option<usize> {
-        let slot_idx = self.find_slot_by_addr(base_addr)?;
+    /// This function is called separately from allocation logic to keep
+    /// the allocation path clean and fast.
+    fn print_alloc_failure_stats(&self, num_pages: usize, align_pow2: usize) {
+        warn!("=== Allocation Failure Details ===");
+        warn!("Requested: {} pages ({} MB), alignment: {} bytes",
+              num_pages,
+              (num_pages * PAGE_SIZE) / (1024 * 1024),
+              1usize << align_pow2);
 
-        let comp = self.composite_allocs[slot_idx];
-        debug!("Deallocating composite allocation at {:#x}, parts={}", 
-                base_addr, comp.num_parts);
+        let buddy_stats = self.buddy.get_stats();
+        warn!("Buddy Allocator Statistics:");
+        warn!("  Total pages: {} ({} MB)",
+              buddy_stats.total_pages,
+              (buddy_stats.total_pages * PAGE_SIZE) / (1024 * 1024));
+        warn!("  Free pages: {} ({} MB)",
+              buddy_stats.free_pages,
+              (buddy_stats.free_pages * PAGE_SIZE) / (1024 * 1024));
+        warn!("  Used pages: {} ({} MB)",
+              buddy_stats.used_pages,
+              (buddy_stats.used_pages * PAGE_SIZE) / (1024 * 1024));
 
-        // Free all constituent blocks
-        for i in 0..comp.num_parts as usize {
-            let (addr, order) = comp.parts[i];
-            let pages = 1usize << order;
-            
-            debug!("  Freeing part {}: addr={:#x}, order={}, pages={}", 
-                    i, addr, order, pages);
-            self.buddy.dealloc_pages(addr, pages);
-        }
-
-        // Mark slot as free
-        self.composite_allocs[slot_idx].used = false;
-
-        info!("Composite deallocation completed: freed {} pages at {:#x}", 
-              comp.total_pages, base_addr);
-
-        Some(comp.total_pages)
-    }
-
-    /// Check if an address corresponds to a composite allocation.
-    fn is_composite_allocation(&self, base_addr: usize) -> bool {
-        self.find_slot_by_addr(base_addr).is_some()
-    }
-
-    /// Get statistics about composite allocations.
-    pub fn get_composite_stats(&self) -> CompositeStats {
-        let mut count = 0;
-        let mut total_pages = 0;
-        let mut total_parts = 0;
-
-        for slot in &self.composite_allocs {
-            if slot.used {
-                count += 1;
-                total_pages += slot.total_pages;
-                total_parts += slot.num_parts as usize;
+        warn!("Free blocks by order:");
+        for (order, &count) in buddy_stats.free_pages_by_order.iter().enumerate() {
+            if count > 0 {
+                let block_size = 1usize << order;
+                let size_mb = (block_size * PAGE_SIZE) / (1024 * 1024);
+                warn!("  Order {}: {} blocks ({} MB each, {} MB total)",
+                      order, count, size_mb, size_mb * count);
             }
         }
 
-        CompositeStats {
-            active_allocations: count,
-            total_pages_in_composite: total_pages,
-            total_parts: total_parts,
-            max_slots: MAX_COMPOSITE_ALLOCS,
-            used_slots: count,
-        }
+        warn!("=== End of Failure Details ===");
     }
-}
-
-/// Statistics for composite allocations
-#[derive(Debug, Clone, Copy)]
-pub struct CompositeStats {
-    /// Number of active composite allocations
-    pub active_allocations: usize,
-    /// Total pages allocated via composite method
-    pub total_pages_in_composite: usize,
-    /// Total number of buddy blocks used in all composite allocations
-    pub total_parts: usize,
-    /// Maximum number of composite allocations that can be tracked
-    pub max_slots: usize,
-    /// Number of slots currently in use
-    pub used_slots: usize,
 }
 
 impl PageAllocator for CompositePageAllocator {
@@ -342,45 +235,50 @@ impl PageAllocator for CompositePageAllocator {
     ///
     /// # Strategy
     /// 1. First try standard buddy allocation (fast path)
-    /// 2. If that fails, fall back to composite allocation (slow path)
+    /// 2. If that fails, try contiguous block combination (medium path)
     ///
     /// This ensures that:
     /// - Power-of-2 allocations use efficient buddy system
-    /// - Non-power-of-2 allocations can still succeed if memory is available
-    /// - No fragmentation is introduced unnecessarily
+    /// - Non-power-of-2 allocations can succeed if contiguous blocks are available
+    /// - All allocations return physically contiguous memory
     fn alloc_pages(&mut self, num_pages: usize, align_pow2: usize) -> AllocResult<usize> {
         // Fast path: try standard buddy allocation first
         match self.buddy.alloc_pages(num_pages, align_pow2) {
             Ok(addr) => {
                 debug!("Standard buddy allocation: addr={:#x}, pages={}", addr, num_pages);
+                // Assertion: allocated pages must be >= requested pages
+                debug_assert!(num_pages <= num_pages, "Allocated pages {} < requested {}", num_pages, num_pages);
                 Ok(addr)
             }
             Err(_) => {
-                // Slow path: composite allocation
-                debug!("Standard allocation failed, trying composite allocation for {} pages", num_pages);
-                self.alloc_composite(num_pages, align_pow2)
+                // Medium path: try contiguous block combination
+                debug!("Standard allocation failed, trying contiguous block combination for {} pages", num_pages);
+                if let Some(addr) = self.try_combine_contiguous_blocks(num_pages, align_pow2) {
+                    // Assertion: allocated pages must be >= requested pages
+                    debug_assert!(num_pages <= num_pages, "Allocated pages {} < requested {}", num_pages, num_pages);
+                    return Ok(addr);
+                }
+
+                // No contiguous blocks available - print failure statistics
+                debug!("Contiguous blocks not available for {} pages", num_pages);
+                self.print_alloc_failure_stats(num_pages, align_pow2);
+                Err(AllocError::NoMemory)
             }
         }
     }
 
     /// Deallocate memory pages.
     ///
-    /// Automatically detects whether the allocation was standard or composite
-    /// and calls the appropriate deallocation method.
+    /// Simply delegates to the underlying buddy allocator since all allocations
+    /// are guaranteed to be contiguous.
     fn dealloc_pages(&mut self, pos: usize, num_pages: usize) {
-        if self.is_composite_allocation(pos) {
-            debug!("Deallocating composite allocation at {:#x}", pos);
-            self.dealloc_composite(pos);
-        } else {
-            debug!("Deallocating standard allocation at {:#x}", pos);
-            self.buddy.dealloc_pages(pos, num_pages);
-        }
+        debug!("Deallocating pages at {:#x}, count={}", pos, num_pages);
+        self.buddy.dealloc_pages(pos, num_pages);
     }
 
     /// Allocate contiguous memory pages at a specific address.
     ///
-    /// Currently delegates to buddy allocator as composite allocation
-    /// doesn't support fixed-address allocation.
+    /// Delegates to buddy allocator.
     fn alloc_pages_at(&mut self, base: usize, num_pages: usize, align_pow2: usize) -> AllocResult<usize> {
         self.buddy.alloc_pages_at(base, num_pages, align_pow2)
     }
@@ -403,7 +301,7 @@ impl PageAllocator for CompositePageAllocator {
 
 impl CompositePageAllocator {
     /// Get buddy allocator statistics
-    pub fn get_buddy_stats(&self) -> crate::buddy_page_allocator::BuddyStats {
+    pub fn get_buddy_stats(&self) -> crate::buddy::BuddyStats {
         self.buddy.get_stats()
     }
 
@@ -417,7 +315,7 @@ impl BaseAllocator for CompositePageAllocator {
     /// Initialize the allocator with a free memory region.
     fn init(&mut self, start: usize, size: usize) {
         self.buddy.init(start, size);
-        self.init_composite();
+        debug!("CompositePageAllocator initialized");
     }
 
     /// Add a free memory region to the allocator.
@@ -448,35 +346,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_composite_allocator_basic() {
+    fn test_contiguous_allocator_basic() {
         let mut allocator = CompositePageAllocator::new();
         allocator.init(0x80000000, 0x10000000); // 256MB
 
         // Test standard allocation (power of 2)
         let addr1 = allocator.alloc_pages(1024, PAGE_SIZE).unwrap();
-        assert!(allocator.is_composite_allocation(addr1) == false);
+        assert!(addr1 >= 0x80000000);
 
         allocator.dealloc_pages(addr1, 1024);
     }
 
     #[test]
-    fn test_composite_allocation_decomposition() {
-        let allocator = CompositePageAllocator::new();
-        
-        // Test 1536 pages (6MB) = 1024 + 512
-        let (orders, count) = allocator.find_best_orders(1536).unwrap();
-        assert_eq!(count, 2);
-        // Should use order 10 (1024) and order 9 (512)
-        assert!(orders[0] >= orders[1]); // Largest first
-    }
-
-    #[test]
-    fn test_composite_stats() {
+    fn test_allocator_stats() {
         let mut allocator = CompositePageAllocator::new();
         allocator.init(0x80000000, 0x10000000);
 
-        let stats = allocator.get_composite_stats();
-        assert_eq!(stats.active_allocations, 0);
-        assert_eq!(stats.max_slots, MAX_COMPOSITE_ALLOCS);
+        let buddy_stats = allocator.get_buddy_stats();
+        assert!(buddy_stats.total_pages > 0);
+        assert!(buddy_stats.free_pages > 0);
     }
 }

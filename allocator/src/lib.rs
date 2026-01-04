@@ -134,11 +134,11 @@ const fn is_aligned(base_addr: usize, align: usize) -> bool {
 }
 
 // Export our allocator implementations
-pub mod buddy_page_allocator;
-pub use buddy_page_allocator::{BuddyPageAllocator, BuddyStats, MemoryRegion};
+pub mod buddy;
+pub use buddy::{BuddyPageAllocator, BuddyStats, MAX_ZONES, DEFAULT_MAX_ORDER};
 
 pub mod page_allocator;
-pub use page_allocator::{CompositePageAllocator, CompositeStats};
+pub use page_allocator::CompositePageAllocator;
 
 pub mod slab_byte_allocator;
 pub use slab_byte_allocator::{SlabByteAllocator, SizeClass, SlabMeta, PageAllocatorForSlab};
@@ -154,3 +154,5 @@ pub use tracking::{
     get_stats_by_tag, get_memory_leaks, print_memory_report,
     reset_tracking,
 };
+
+

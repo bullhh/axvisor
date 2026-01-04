@@ -161,8 +161,10 @@ test test_buddy_allocator_basic ... ok
 ## 文件变更
 
 ### 核心实现
-- `allocator/src/buddy_page_allocator.rs`
-  - 多zone架构
+- `allocator/src/buddy/`
+  - 多zone架构的模块化实现
+  - `buddy_allocator.rs`: 多zone的buddy分配器
+  - `buddy_set.rs`: 单zone实现
   - Zone增强数据结构
   - 改进的验证逻辑
 

@@ -222,11 +222,12 @@ Overall Summary:
 
 ### 主要文件
 
-- `allocator/src/buddy_page_allocator.rs`: 核心实现
-  - `BuddySet`: 添加 `zone_id`, `end_addr`
-  - `BuddyPageAllocator`: 从单一pool改为多zone数组
-  - 新增 `find_zone_for_addr()`, `update_stats()`
-  - 改进 `dealloc_pages()` 验证逻辑
+- `allocator/src/buddy/`: 核心实现
+  - `buddy_allocator.rs`: 多zone的buddy分配器
+  - `buddy_set.rs`: 添加 `zone_id`, `end_addr`
+  - `buddy_block.rs`: ZoneInfo 和 BuddyBlock 定义
+  - `linked_list.rs`: 有序链表实现
+  - `stats.rs`: 统计信息
 
 ### 新增文档
 
