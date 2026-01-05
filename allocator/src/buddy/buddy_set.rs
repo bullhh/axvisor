@@ -4,7 +4,7 @@
 //! sorted free lists for efficient contiguity checking.
 
 use crate::{AllocError, AllocResult};
-use log::{info, trace, warn};
+use log::{debug, error, info, trace, warn};
 
 use super::{
     buddy_block::{BuddyBlock, ZoneInfo, MAX_BLOCKS_PER_LIST},
@@ -60,7 +60,7 @@ impl BuddySet {
 
     /// Initialize the buddy set with a memory region
     pub fn init(&mut self, base_addr: usize, size: usize) {
-        info!(
+        debug!(
             "zone {}: Initialize with region [{:#x}, {:#x})",
             self.zone_id, base_addr, base_addr + size
         );
@@ -75,7 +75,7 @@ impl BuddySet {
             panic!("Aligned size is too small: {:#x}", aligned_size);
         }
 
-        info!(
+        debug!(
             "zone {}: Adjusted region [{:#x}, {:#x}) (original [{:#x}, {:#x}))",
             self.zone_id, aligned_base, aligned_end, base_addr, end
         );
@@ -96,14 +96,14 @@ impl BuddySet {
             self.dealloc_pages(page_addr, 1);
         }
 
-        info!(
+        debug!(
             "zone {}: {} pages initialized in buddy system",
             self.zone_id, self.total_pages
         );
     }
 
     /// Allocate pages using buddy system
-    pub fn alloc_pages(&mut self, num_pages: usize, _align_pow2: usize) -> AllocResult<usize> {
+    pub fn alloc_pages(&mut self, num_pages: usize, alignment: usize) -> AllocResult<usize> {
         if num_pages == 0 {
             return Err(AllocError::InvalidParam);
         }
@@ -113,16 +113,28 @@ impl BuddySet {
             num_pages.trailing_zeros() as usize
         } else {
             num_pages.next_power_of_two().trailing_zeros() as usize
+        };
+
+        if required_order > self.max_order() {
+            return Err(AllocError::NoMemory);
         }
-        .min(DEFAULT_MAX_ORDER);
+
+        // Convert byte alignment to page alignment order
+        // Ensure at least page-level alignment
+        let align_pages = (alignment + PAGE_SIZE - 1) / PAGE_SIZE;
+        let align_order = align_pages.trailing_zeros() as usize;
+
+        let order_needed = required_order.max(align_order);
+        debug!("zone {}: Allocating {} pages, required order: {}, alignment: {}, order_needed: {}", 
+                self.zone_id, num_pages, required_order, alignment, order_needed);
 
         // Try to find a block of the required order or higher
-        for order in required_order..=self.max_order() {
+        for order in order_needed..=self.max_order() {
             if !self.free_lists[order].is_empty() {
                 let mut block = self.free_lists[order].pop_front().unwrap();
 
                 // Split down to required order
-                while block.order > required_order {
+                while block.order > order_needed {
                     block.order -= 1;
                     let split_size = (1 << block.order) * PAGE_SIZE;
                     let buddy_addr = block.addr + split_size;
@@ -142,6 +154,11 @@ impl BuddySet {
                         return Err(AllocError::NoMemory);
                     }
                 }
+
+                // Verify alignment requirement
+                assert!(block.addr % alignment == 0,
+                    "Allocated address {:#x} is not aligned to {:#x} bytes ",
+                    block.addr, alignment);
 
                 return Ok(block.addr);
             }
@@ -284,9 +301,28 @@ impl BuddySet {
 
         // Validate address belongs to this zone
         if !self.addr_in_zone(addr) {
-            warn!(
+            error!(
                 "zone {}: Address {:#x} not in zone [{:#x}, {:#x})",
                 self.zone_id, addr, self.base_addr, self.end_addr
+            );
+            return;
+        }
+
+        // Buddy system can only handle power-of-2 allocations
+        if !num_pages.is_power_of_two() {
+            error!(
+                "zone {}: Cannot free {} pages: must be power of 2",
+                self.zone_id, num_pages
+            );
+            return;
+        }
+
+        // Calculate order for this deallocation
+        let mut order = num_pages.trailing_zeros() as usize;
+        if order > DEFAULT_MAX_ORDER {
+            error!(
+                "zone {}: Order {} exceeds maximum supported order {}",
+                self.zone_id, order, DEFAULT_MAX_ORDER
             );
             return;
         }
@@ -294,17 +330,9 @@ impl BuddySet {
         // Convert address and pages to PFN (Page Frame Number)
         let pfn = addr / PAGE_SIZE;
 
-        // Calculate the order for this deallocation
-        let mut order = if num_pages.is_power_of_two() {
-            num_pages.trailing_zeros() as usize
-        } else {
-            num_pages.next_power_of_two().trailing_zeros() as usize
-        }
-        .min(DEFAULT_MAX_ORDER);
-
         // Check alignment using PFN
         if pfn & ((1 << order) - 1) != 0 {
-            warn!(
+            error!(
                 "zone {}: Page PFN {} is not properly aligned for order {} (needs alignment to {} pages)",
                 self.zone_id, pfn, order, 1 << order
             );
@@ -313,7 +341,7 @@ impl BuddySet {
 
         // Check page alignment
         if addr & (PAGE_SIZE - 1) != 0 {
-            warn!(
+            error!(
                 "zone {}: Attempt to free page at non-page-aligned address {:#x}",
                 self.zone_id, addr
             );
@@ -330,6 +358,7 @@ impl BuddySet {
 
             // Verify buddy is within the zone
             let buddy_addr = buddy_pfn * PAGE_SIZE;
+            
             if !self.addr_in_zone(buddy_addr) {
                 break;
             }

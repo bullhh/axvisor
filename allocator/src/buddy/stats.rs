@@ -69,9 +69,9 @@ impl MemoryStatsReporter {
         error!("ALLOCATION FAILURE STATISTICS");
         error!("========================================");
         error!(
-            "Request: {} pages ({} MB, alignment: 2^{} pages)",
+            "Request: {} pages ({} KB, alignment:{})",
             request_pages,
-            (request_pages * PAGE_SIZE) / (1024 * 1024),
+            (request_pages * PAGE_SIZE) / (1024),
             request_align
         );
         error!("========================================");

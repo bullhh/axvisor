@@ -5,7 +5,7 @@
 
 use crate::{AllocError, AllocResult, BaseAllocator, PageAllocator};
 use alloc::vec::Vec;
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 
 use super::{
     buddy_block::{BuddyBlock, MAX_BLOCKS_PER_LIST, MAX_ZONES},
@@ -33,7 +33,7 @@ impl BuddyPageAllocator {
 
     /// Bootstrap with initial memory region
     pub fn bootstrap(&mut self, base_addr: usize, size: usize) {
-        info!(
+        debug!(
             "buddy allocator: Bootstrap with region [{:#x}, {:#x})",
             base_addr,
             base_addr + size
@@ -241,7 +241,7 @@ impl BuddyPageAllocator {
     }
 
     /// Print detailed allocation failure statistics
-    pub fn print_alloc_failure_stats(&self, num_pages: usize, align_pow2: usize) {
+    pub fn print_alloc_failure_stats(&self, num_pages: usize, alignment: usize) {
         let mut zone_infos = Vec::new();
         let mut zone_stats = Vec::new();
 
@@ -256,7 +256,7 @@ impl BuddyPageAllocator {
             &zone_infos,
             &zone_stats,
             num_pages,
-            align_pow2,
+            alignment,
         );
     }
 
@@ -326,9 +326,9 @@ impl BaseAllocator for BuddyPageAllocator {
 impl PageAllocator for BuddyPageAllocator {
     const PAGE_SIZE: usize = PAGE_SIZE;
 
-    fn alloc_pages(&mut self, num_pages: usize, align_pow2: usize) -> AllocResult<usize> {
+    fn alloc_pages(&mut self, num_pages: usize, alignment: usize) -> AllocResult<usize> {
         for i in 0..self.num_zones {
-            match self.zones[i].alloc_pages(num_pages, align_pow2) {
+            match self.zones[i].alloc_pages(num_pages, alignment) {
                 Ok(addr) => {
                     self.update_stats();
                     if num_pages > 10 {
@@ -344,8 +344,8 @@ impl PageAllocator for BuddyPageAllocator {
                 }
             }
         }
-        info!("buddy allocator: Allocation failure: {:#x} pages, align {}", num_pages, align_pow2);
-        self.print_alloc_failure_stats(num_pages, align_pow2);
+        info!("buddy allocator: Allocation failure: {} MB, align {}", num_pages * PAGE_SIZE / 0x100000, alignment);
+        self.print_alloc_failure_stats(num_pages, alignment);
         Err(AllocError::NoMemory)
     }
 
@@ -365,10 +365,10 @@ impl PageAllocator for BuddyPageAllocator {
         &mut self,
         base: usize,
         num_pages: usize,
-        align_pow2: usize,
+        alignment: usize,
     ) -> AllocResult<usize> {
         if let Some(zone_idx) = self.find_zone_for_addr(base) {
-            match self.zones[zone_idx].alloc_pages(num_pages, align_pow2) {
+            match self.zones[zone_idx].alloc_pages(num_pages, alignment) {
                 Ok(addr) if addr == base => {
                     self.update_stats();
                     Ok(addr)

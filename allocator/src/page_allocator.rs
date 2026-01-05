@@ -93,7 +93,7 @@ impl CompositePageAllocator {
     ///
     /// # Returns
     /// Base address of the first block if contiguous blocks found, otherwise None
-    fn try_combine_contiguous_blocks(&mut self, num_pages: usize, align_pow2: usize) -> Option<usize> {
+    fn try_combine_contiguous_blocks(&mut self, num_pages: usize, alignment: usize) -> Option<usize> {
         let mut remaining_pages = num_pages;
         let mut contiguous_blocks: [(usize, u32); MAX_PARTS_PER_ALLOC] = [(0, 0); MAX_PARTS_PER_ALLOC];
         let mut block_count = 0;
@@ -120,11 +120,9 @@ impl CompositePageAllocator {
                         let block_start = block.addr;
                         let block_end = block_start + block_pages * PAGE_SIZE;
 
-                        info!("block_start: {:#x}, block_end: {:#x}, align_pow2: {}", block_start, block_end, align_pow2);
+                        info!("block_start: {:#x}, block_end: {:#x}, alignment: {}", block_start, block_end, alignment);
                         // Check alignment requirement
-                        // align_pow2 means: align to (2^align_pow2) pages
-                        let alignment_bytes = (1usize << align_pow2) * PAGE_SIZE;
-                        if !crate::is_aligned(block_start, alignment_bytes) {
+                        if !crate::is_aligned(block_start, alignment) {
                             info!("block_start is not aligned");
                             continue;
                         }
@@ -187,7 +185,7 @@ impl CompositePageAllocator {
                       i, addr, order, block_pages, block_size_mb);
 
                 // Allocate this specific block
-                if let Err(_e) = self.buddy.alloc_pages_at(addr, block_pages, align_pow2) {
+                if let Err(_e) = self.buddy.alloc_pages_at(addr, block_pages, alignment) {
                     // Allocation failed, rollback
                     warn!("Contiguous block allocation failed at {}, rolling back", i);
                     for j in 0..i {
@@ -250,12 +248,12 @@ impl CompositePageAllocator {
     ///
     /// This function is called separately from allocation logic to keep
     /// the allocation path clean and fast.
-    fn print_alloc_failure_stats(&self, num_pages: usize, align_pow2: usize) {
+    fn print_alloc_failure_stats(&self, num_pages: usize, alignment: usize) {
         warn!("=== Allocation Failure Details ===");
         warn!("Requested: {} pages ({} MB), alignment: {} bytes",
               num_pages,
               (num_pages * PAGE_SIZE) / (1024 * 1024),
-              1usize << align_pow2);
+              alignment);
 
         let buddy_stats = self.buddy.get_stats();
         warn!("Buddy Allocator Statistics:");
@@ -326,33 +324,11 @@ impl PageAllocator for CompositePageAllocator {
     /// Backward decomposition solves this by:
     /// - Starting from the base address (already aligned)
     /// - Ensuring each chunk is checked for alignment before use
-    fn alloc_pages(&mut self, num_pages: usize, align_pow2: usize) -> AllocResult<usize> {
+    fn alloc_pages(&mut self, num_pages: usize, alignment: usize) -> AllocResult<usize> {
         if num_pages == 0 {
             return Err(AllocError::InvalidParam);
         }
 
-        // Convert byte alignment to page alignment power-of-2
-        // align_pow2 might be byte value (e.g., 4096) or page alignment power (e.g., 0)
-        // The final align_pow2 means: align to (2^align_pow2) pages
-        let original_align_pow2 = align_pow2;
-        let align_pow2 = if align_pow2.is_power_of_two() && align_pow2 >= PAGE_SIZE {
-            // It's a byte alignment value, convert to page alignment power
-            let pages_needed = align_pow2 / PAGE_SIZE;
-            if pages_needed.is_power_of_two() {
-                pages_needed.ilog2() as usize
-            } else {
-                // Not power-of-2 pages, cap at max reasonable alignment
-                DEFAULT_MAX_ORDER
-            }
-        } else {
-            // Already a page alignment power value, cap at max order
-            align_pow2.min(DEFAULT_MAX_ORDER)
-        };
-
-        debug!("Alignment conversion: {} bytes -> align_pow2={}",
-              original_align_pow2, align_pow2);
-
-        // Calculate size buddy will allocate (next power of 2)
         let buddy_pages = if num_pages.is_power_of_two() {
             num_pages
         } else {
@@ -360,15 +336,15 @@ impl PageAllocator for CompositePageAllocator {
         };
 
         // Try to allocate from buddy system first
-        let base_addr = match self.buddy.alloc_pages(buddy_pages, align_pow2) {
+        let base_addr = match self.buddy.alloc_pages(buddy_pages, alignment) {
             Ok(addr) => addr,
             Err(_) => {
                 // Standard allocation failed, try contiguous block combination
                 info!("Standard allocation failed, trying contiguous block combination for {} pages", num_pages);
-                if let Some(addr) = self.try_combine_contiguous_blocks(num_pages, align_pow2) {
+                if let Some(addr) = self.try_combine_contiguous_blocks(num_pages, alignment) {
                     return Ok(addr);
                 }
-                self.print_alloc_failure_stats(num_pages, align_pow2);
+                self.print_alloc_failure_stats(num_pages, alignment);
                 return Err(AllocError::NoMemory);
             }
         };
@@ -550,8 +526,8 @@ impl PageAllocator for CompositePageAllocator {
     /// Allocate contiguous memory pages at a specific address.
     ///
     /// Delegates to buddy allocator.
-    fn alloc_pages_at(&mut self, base: usize, num_pages: usize, align_pow2: usize) -> AllocResult<usize> {
-        self.buddy.alloc_pages_at(base, num_pages, align_pow2)
+    fn alloc_pages_at(&mut self, base: usize, num_pages: usize, alignment: usize) -> AllocResult<usize> {
+        self.buddy.alloc_pages_at(base, num_pages, alignment)
     }
 
     /// Return total number of memory pages.
@@ -586,7 +562,6 @@ impl BaseAllocator for CompositePageAllocator {
     /// Initialize the allocator with a free memory region.
     fn init(&mut self, start: usize, size: usize) {
         self.buddy.init(start, size);
-        debug!("CompositePageAllocator initialized");
     }
 
     /// Add a free memory region to the allocator.
@@ -597,8 +572,8 @@ impl BaseAllocator for CompositePageAllocator {
 
 // Implement PageAllocatorForSlab for CompositePageAllocator
 impl crate::slab_byte_allocator::PageAllocatorForSlab for CompositePageAllocator {
-    fn alloc_pages(&mut self, num_pages: usize, align_pow2: usize) -> AllocResult<usize> {
-        <Self as PageAllocator>::alloc_pages(self, num_pages, align_pow2)
+    fn alloc_pages(&mut self, num_pages: usize, alignment: usize) -> AllocResult<usize> {
+        <Self as PageAllocator>::alloc_pages(self, num_pages, alignment)
     }
 
     fn dealloc_pages(&mut self, pos: usize, num_pages: usize) {

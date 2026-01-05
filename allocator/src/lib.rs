@@ -19,7 +19,7 @@ use core::ptr::NonNull;
 /// The error type used for allocation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AllocError {
-    /// Invalid `size` or `align_pow2`. (e.g. unaligned)
+    /// Invalid `size` or alignment. (e.g. unaligned)
     InvalidParam,
     /// Memory added by `add_memory` overlapped with existed memory.
     MemoryOverlap,
@@ -64,18 +64,18 @@ pub trait PageAllocator: BaseAllocator {
     /// The size of a memory page.
     const PAGE_SIZE: usize;
 
-    /// Allocate contiguous memory pages with given count and alignment.
-    fn alloc_pages(&mut self, num_pages: usize, align_pow2: usize) -> AllocResult<usize>;
-    
+    /// Allocate contiguous memory pages with given count and alignment (in bytes).
+    fn alloc_pages(&mut self, num_pages: usize, alignment: usize) -> AllocResult<usize>;
+
     /// Deallocate contiguous memory pages with given position and count.
     fn dealloc_pages(&mut self, pos: usize, num_pages: usize);
 
-    /// Allocate contiguous memory pages with given base address, count and alignment.
+    /// Allocate contiguous memory pages with given base address, count and alignment (in bytes).
     fn alloc_pages_at(
         &mut self,
         base: usize,
         num_pages: usize,
-        align_pow2: usize,
+        alignment: usize,
     ) -> AllocResult<usize>;
 
     /// Returns the total number of memory pages.
@@ -91,7 +91,7 @@ pub trait PageAllocator: BaseAllocator {
 /// Used to allocate unique IDs (e.g., thread ID).
 pub trait IdAllocator: BaseAllocator {
     /// Allocate contiguous IDs with given count and alignment.
-    fn alloc_id(&mut self, count: usize, align_pow2: usize) -> AllocResult<usize>;
+    fn alloc_id(&mut self, count: usize, alignment: usize) -> AllocResult<usize>;
 
     /// Deallocate contiguous IDs with given position and count.
     fn dealloc_id(&mut self, start_id: usize, count: usize);
