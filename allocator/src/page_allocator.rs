@@ -3,22 +3,48 @@
 //! This module implements a page allocator that guarantees contiguous physical memory
 //! allocations. It uses a two-tier strategy:
 //! 1. **Standard allocation**: First attempt to allocate using the buddy allocator
-//!    for power-of-2 sized requests
-//! 2. **Contiguous block combination**: If standard allocation fails, try to find
+//! 2. **Backward decomposition overflow**: If buddy allocates more than requested,
+//!    use backward decomposition to return excess memory back to buddy system
+//! 3. **Contiguous block combination**: If standard allocation fails, try to find
 //!    contiguous small blocks that can satisfy the request
 //!
 //! # Example
 //!
 //! ```ignore
 //! // Request 1536 pages (6MB, not a power of 2)
-//! // If buddy has contiguous 1024-page + 512-page blocks:
-//! // - Standard allocation fails (need 2048 pages for Order 11)
-//! // - Contiguous blocks: check if 1024 pages + 512 pages are contiguous
-//! // - Allocation succeeds only if blocks are physically contiguous
+//! // Buddy allocates 2048 pages (8MB, Order 11)
+//! // Page allocator uses backward decomposition:
+//! //   - 1024 pages -> user (1024 <= 1536)
+//! //   - 512 pages -> user (1024+512=1536 == 1536)
+//! //   - Remaining 512 pages -> returned to buddy
+//! // User receives exactly 1536 pages
 //! ```
+//!
+//! # Backward Decomposition Strategy
+//!
+//! The buddy system always allocates power-of-2 sized blocks. When a user requests
+//! a non-power-of-2 amount, we use backward decomposition:
+//!
+//! 1. Allocate next power-of-2 from buddy system
+//! 2. Start from the base address (which is aligned to power-of-2)
+//! 3. Decompose the block from largest to smallest orders
+//! 4. For each chunk, decide if it goes to the user or back to buddy
+//! 5. Ensure all chunks are properly aligned
+//!
+//! # Why Backward?
+//!
+//! Forward decomposition (starting from user's end) causes alignment issues:
+//! - Excess starts at base + user_pages, which may not be aligned
+//! - Example: 0x80000000 (2^11 aligned) + 1540 pages = 0x8180D000
+//! - 0x8180D000 / 4096 = 135949, 135949 % 256 = 61 ≠ 0
+//! - Not aligned for order 8 (256 pages)!
+//!
+//! Backward decomposition solves this by:
+//! - Starting from the base address (already aligned)
+//! - Ensuring each chunk is checked for alignment before use
 
 use crate::{AllocError, AllocResult, PageAllocator, BaseAllocator};
-use crate::buddy::BuddyPageAllocator;
+use crate::buddy::{BuddyPageAllocator, DEFAULT_MAX_ORDER};
 use log::{debug, info, warn};
 
 /// Maximum number of buddy blocks in a single contiguous allocation
@@ -27,22 +53,19 @@ const MAX_PARTS_PER_ALLOC: usize = 8;
 /// Page size (4KB)
 const PAGE_SIZE: usize = 0x1000;
 
-/// Page allocator with contiguous block combination support.
+/// Page allocator with overflow handling and contiguous block combination support.
 ///
-/// This allocator extends the buddy system to handle arbitrary-sized allocations
-/// while guaranteeing physical contiguity.
+/// This allocator extends the buddy system to:
+/// 1. **Handle overflow**: Return excess memory allocated by buddy back to system
+/// 2. **Combine contiguous blocks**: When standard allocation fails, try to find
+///    contiguous small blocks that can satisfy the request
 ///
 /// # Why Not Directly Modifying BuddyPageAllocator?
 ///
-/// - **Separation of concerns**: Buddy allocator should focus on the core buddy algorithm
-/// - **Maintainability**: Contiguous allocation logic is independent and easier to test
-/// - **Flexibility**: Can replace buddy allocator with other implementations
-/// - **Layering**: Allows adding VM layer or other optimizations later
-///
-/// # Allocation Strategy
-///
-/// 1. For power-of-2 sized requests: Try standard buddy allocation first
-/// 2. For non-power-of-2 or failed allocations: Try to combine contiguous blocks
+/// - **Separation of concerns**: Buddy allocator should focus on core buddy algorithm
+/// - **Purity**: Buddy system should maintain standard behavior (always allocates power-of-2)
+/// - **Flexibility**: Different page allocators can have different overflow strategies
+/// - **Maintainability**: Overflow logic is independent and easier to test at this layer
 pub struct CompositePageAllocator {
     /// Underlying buddy allocator for standard allocations
     buddy: BuddyPageAllocator,
@@ -97,8 +120,12 @@ impl CompositePageAllocator {
                         let block_start = block.addr;
                         let block_end = block_start + block_pages * PAGE_SIZE;
 
+                        info!("block_start: {:#x}, block_end: {:#x}, align_pow2: {}", block_start, block_end, align_pow2);
                         // Check alignment requirement
-                        if !crate::is_aligned(block_start, 1usize << align_pow2) {
+                        // align_pow2 means: align to (2^align_pow2) pages
+                        let alignment_bytes = (1usize << align_pow2) * PAGE_SIZE;
+                        if !crate::is_aligned(block_start, alignment_bytes) {
+                            info!("block_start is not aligned");
                             continue;
                         }
 
@@ -191,6 +218,34 @@ impl CompositePageAllocator {
         None
     }
 
+    /// Decompose a non-power-of-2 page count into power-of-2 chunks.
+    ///
+    /// This is used when deallocating memory that wasn't a power-of-2 allocation.
+    /// Each chunk is returned to the buddy separately.
+    fn dealloc_non_power_of_two(&mut self, mut addr: usize, mut pages: usize) {
+        debug!("Deallocating non-power-of-2: {} pages at {:#x}", pages, addr);
+
+        let mut chunk_count = 0;
+
+        while pages > 0 {
+            // Binary decomposition: find largest power of 2 <= pages
+            let highest_bit = pages.ilog2();
+            let chunk_pages = 1usize << highest_bit;
+
+            debug!("Chunk {}: dealloc {} pages at {:#x}",
+                   chunk_count, chunk_pages, addr);
+
+            self.buddy.dealloc_pages(addr, chunk_pages);
+
+            // Move to next chunk
+            addr += chunk_pages * PAGE_SIZE;
+            pages -= chunk_pages;
+            chunk_count += 1;
+        }
+
+        debug!("Deallocated {} chunks total", chunk_count);
+    }
+
     /// Print detailed statistics when allocation fails.
     ///
     /// This function is called separately from allocation logic to keep
@@ -231,49 +286,265 @@ impl CompositePageAllocator {
 impl PageAllocator for CompositePageAllocator {
     const PAGE_SIZE: usize = PAGE_SIZE;
 
-    /// Allocate contiguous memory pages.
+    /// Allocate contiguous memory pages with backward decomposition overflow handling.
     ///
-    /// # Strategy
-    /// 1. First try standard buddy allocation (fast path)
-    /// 2. If that fails, try contiguous block combination (medium path)
+    /// # Backward Decomposition Strategy
     ///
-    /// This ensures that:
-    /// - Power-of-2 allocations use efficient buddy system
-    /// - Non-power-of-2 allocations can succeed if contiguous blocks are available
-    /// - All allocations return physically contiguous memory
+    /// The buddy system always allocates power-of-2 sized blocks. When a user requests
+    /// a non-power-of-2 amount, we use backward decomposition:
+    ///
+    /// 1. Allocate next power-of-2 from buddy system
+    /// 2. Start from the base address (which is aligned to power-of-2)
+    /// 3. Decompose the block from largest to smallest orders
+    /// 4. For each chunk, decide if it goes to the user or back to buddy
+    /// 5. Ensure all chunks are properly aligned
+    ///
+    /// # Example: Request 1540 pages
+    /// - Buddy allocates: 2048 pages (2^11) at 0x80000000 (aligned to 2^11)
+    /// - Decompose from base:
+    ///   * Order 10 (1024 pages): Give to user (1024 <= 1540)
+    ///   * Order 9 (512 pages): Give to user (1024+512=1536 <= 1540)
+    ///   * Order 2 (4 pages): Give to user (1536+4=1540 == 1540) ✓
+    ///   * Remaining: 2048-1540 = 508 pages
+    ///   * Order 8 (256 pages): Return to buddy
+    ///   * Order 7 (128 pages): Return to buddy
+    ///   * Order 6 (64 pages): Return to buddy
+    ///   * Order 5 (32 pages): Return to buddy
+    ///   * Order 4 (16 pages): Return to buddy
+    ///   * Order 3 (8 pages): Return to buddy
+    ///   * Order 2 (4 pages): Return to buddy
+    /// - All chunks are properly aligned! No alignment errors.
+    ///
+    /// # Why Backward?
+    ///
+    /// Forward decomposition (starting from user's end) causes alignment issues:
+    /// - Excess starts at base + user_pages, which may not be aligned
+    /// - Example: 0x80000000 (2^11 aligned) + 1540 pages = 0x8180D000
+    /// - 0x8180D000 / 4096 = 135949, 135949 % 256 = 61 ≠ 0
+    /// - Not aligned for order 8 (256 pages)!
+    ///
+    /// Backward decomposition solves this by:
+    /// - Starting from the base address (already aligned)
+    /// - Ensuring each chunk is checked for alignment before use
     fn alloc_pages(&mut self, num_pages: usize, align_pow2: usize) -> AllocResult<usize> {
-        // Fast path: try standard buddy allocation first
-        match self.buddy.alloc_pages(num_pages, align_pow2) {
-            Ok(addr) => {
-                debug!("Standard buddy allocation: addr={:#x}, pages={}", addr, num_pages);
-                // Assertion: allocated pages must be >= requested pages
-                debug_assert!(num_pages <= num_pages, "Allocated pages {} < requested {}", num_pages, num_pages);
-                Ok(addr)
+        if num_pages == 0 {
+            return Err(AllocError::InvalidParam);
+        }
+
+        // Convert byte alignment to page alignment power-of-2
+        // align_pow2 might be byte value (e.g., 4096) or page alignment power (e.g., 0)
+        // The final align_pow2 means: align to (2^align_pow2) pages
+        let original_align_pow2 = align_pow2;
+        let align_pow2 = if align_pow2.is_power_of_two() && align_pow2 >= PAGE_SIZE {
+            // It's a byte alignment value, convert to page alignment power
+            let pages_needed = align_pow2 / PAGE_SIZE;
+            if pages_needed.is_power_of_two() {
+                pages_needed.ilog2() as usize
+            } else {
+                // Not power-of-2 pages, cap at max reasonable alignment
+                DEFAULT_MAX_ORDER
             }
+        } else {
+            // Already a page alignment power value, cap at max order
+            align_pow2.min(DEFAULT_MAX_ORDER)
+        };
+
+        debug!("Alignment conversion: {} bytes -> align_pow2={}",
+              original_align_pow2, align_pow2);
+
+        // Calculate size buddy will allocate (next power of 2)
+        let buddy_pages = if num_pages.is_power_of_two() {
+            num_pages
+        } else {
+            num_pages.next_power_of_two()
+        };
+
+        // Try to allocate from buddy system first
+        let base_addr = match self.buddy.alloc_pages(buddy_pages, align_pow2) {
+            Ok(addr) => addr,
             Err(_) => {
-                // Medium path: try contiguous block combination
-                debug!("Standard allocation failed, trying contiguous block combination for {} pages", num_pages);
+                // Standard allocation failed, try contiguous block combination
+                info!("Standard allocation failed, trying contiguous block combination for {} pages", num_pages);
                 if let Some(addr) = self.try_combine_contiguous_blocks(num_pages, align_pow2) {
-                    // Assertion: allocated pages must be >= requested pages
-                    debug_assert!(num_pages <= num_pages, "Allocated pages {} < requested {}", num_pages, num_pages);
                     return Ok(addr);
                 }
-
-                // No contiguous blocks available - print failure statistics
-                debug!("Contiguous blocks not available for {} pages", num_pages);
                 self.print_alloc_failure_stats(num_pages, align_pow2);
-                Err(AllocError::NoMemory)
+                return Err(AllocError::NoMemory);
+            }
+        };
+
+        // If buddy allocated exactly what was requested, no overflow handling needed
+        if buddy_pages == num_pages {
+            return Ok(base_addr);
+        }
+
+        // Backward decomposition: decompose from base address
+        info!("=== Backward Decomposition Allocation ===");
+        info!("Base addr: {:#x}, user needs: {} pages, buddy allocated: {} pages",
+              base_addr, num_pages, buddy_pages);
+
+        let mut current_addr = base_addr;
+        let mut remaining_user = num_pages;
+        let mut remaining_buddy = buddy_pages;
+        let mut user_end_addr = base_addr;
+        let mut chunk_count = 0;
+        let mut user_chunks = 0;
+        let mut excess_chunks = 0;
+
+        // Start from the order of buddy allocation
+        let mut order = if buddy_pages > 0 {
+            (buddy_pages.ilog2() as u32).min(DEFAULT_MAX_ORDER as u32) as usize
+        } else {
+            0
+        };
+
+        // Phase 1: Allocate to user until their needs are met
+        // Use binary decomposition: always use the largest block that fits
+        while remaining_user > 0 && remaining_buddy > 0 {
+            // Find the largest power of 2 that fits in remaining_user
+            let max_order = if remaining_user > 0 {
+                (remaining_user.ilog2() as u32).min(DEFAULT_MAX_ORDER as u32) as usize
+            } else {
+                0
+            };
+
+            // Start from the largest possible order
+            order = max_order;
+
+            let mut found_block = false;
+            while order > 0 && !found_block {
+                let block_pages = 1usize << order;
+
+                if block_pages > remaining_buddy {
+                    order -= 1;
+                    continue;
+                }
+
+                // Check alignment at current_addr
+                let pfn = current_addr / PAGE_SIZE;
+                if pfn & ((1 << order) - 1) != 0 {
+                    // Not aligned, try smaller order
+                    order -= 1;
+                    continue;
+                }
+
+                // Found a valid aligned block, give it to user
+                info!("  User chunk #{}: addr={:#x}, pages={}, order={}, size={} MB",
+                      user_chunks, current_addr, block_pages, order,
+                      (block_pages * PAGE_SIZE) / (1024 * 1024));
+                remaining_user -= block_pages;
+                user_end_addr = current_addr + block_pages * PAGE_SIZE;
+                current_addr += block_pages * PAGE_SIZE;
+                remaining_buddy -= block_pages;
+                user_chunks += 1;
+                chunk_count += 1;
+                found_block = true;
+            }
+
+            // If no aligned block found, try order 0 (1 page)
+            if !found_block && remaining_user > 0 && remaining_buddy > 0 {
+                let block_pages = 1usize;
+                let pfn = current_addr / PAGE_SIZE;
+                if pfn & ((1 << 0) - 1) == 0 && block_pages <= remaining_buddy {
+                    info!("  User chunk #{}: addr={:#x}, pages={}, order={}, size={} MB",
+                          user_chunks, current_addr, block_pages, 0,
+                          (block_pages * PAGE_SIZE) / (1024 * 1024));
+                    remaining_user -= block_pages;
+                    user_end_addr = current_addr + block_pages * PAGE_SIZE;
+                    current_addr += block_pages * PAGE_SIZE;
+                    remaining_buddy -= block_pages;
+                    user_chunks += 1;
+                    chunk_count += 1;
+                    found_block = true;
+                }
+            }
+
+            // Safety check to avoid infinite loop
+            if !found_block {
+                warn!("Cannot find aligned block for remaining_user={}, remaining_buddy={}",
+                      remaining_user, remaining_buddy);
+                break;
             }
         }
+
+        // Phase 2: Return remaining blocks back to buddy
+        while remaining_buddy > 0 {
+            let block_pages = 1usize << order;
+
+            if block_pages > remaining_buddy {
+                if order > 0 {
+                    order -= 1;
+                }
+                continue;
+            }
+
+            // Check alignment
+            let pfn = current_addr / PAGE_SIZE;
+            if pfn & ((1 << order) - 1) != 0 {
+                if order > 0 {
+                    order -= 1;
+                }
+                continue;
+            }
+
+            // Return this chunk to buddy
+            info!("  Excess chunk #{}: addr={:#x}, pages={}, order={}, size={} MB",
+                  excess_chunks, current_addr, block_pages, order,
+                  (block_pages * PAGE_SIZE) / (1024 * 1024));
+            self.buddy.dealloc_pages(current_addr, block_pages);
+
+            current_addr += block_pages * PAGE_SIZE;
+            remaining_buddy -= block_pages;
+            excess_chunks += 1;
+            chunk_count += 1;
+
+            // Reset order to try larger blocks
+            order = if remaining_buddy > 0 {
+                (remaining_buddy.ilog2() as u32).min(DEFAULT_MAX_ORDER as u32) as usize
+            } else {
+                0
+            };
+        }
+
+        // Verify we allocated enough to the user
+        debug_assert!(remaining_user == 0,
+                   "Failed to allocate all user pages: {} remaining", remaining_user);
+
+        let total_excess = buddy_pages - num_pages;
+        info!("=== Summary ===");
+        info!("User memory: {:#x} ~ {:#x} ({} pages = {} MB)",
+              base_addr, user_end_addr, num_pages,
+              (num_pages * PAGE_SIZE) / (1024 * 1024));
+        info!("Excess returned: {} pages ({} MB) in {} chunks",
+              total_excess,
+              (total_excess * PAGE_SIZE) / (1024 * 1024),
+              excess_chunks);
+        info!("Total chunks processed: {}", chunk_count);
+        info!("================");
+
+        Ok(base_addr)
     }
 
     /// Deallocate memory pages.
     ///
-    /// Simply delegates to the underlying buddy allocator since all allocations
-    /// are guaranteed to be contiguous.
+    /// Handles both power-of-2 and non-power-of-2 allocations.
+    /// - Power-of-2: Delegates directly to buddy system
+    /// - Non-power-of-2: Decomposes into power-of-2 chunks, then delegates to buddy
     fn dealloc_pages(&mut self, pos: usize, num_pages: usize) {
         debug!("Deallocating pages at {:#x}, count={}", pos, num_pages);
-        self.buddy.dealloc_pages(pos, num_pages);
+
+        if num_pages == 0 {
+            return;
+        }
+
+        // Check if we need to decompose the deallocation
+        if num_pages.is_power_of_two() {
+            // Power-of-2: can deallocate directly to buddy
+            self.buddy.dealloc_pages(pos, num_pages);
+        } else {
+            // Non-power-of-2: decompose into power-of-2 chunks
+            self.dealloc_non_power_of_two(pos, num_pages);
+        }
     }
 
     /// Allocate contiguous memory pages at a specific address.

@@ -344,7 +344,7 @@ impl PageAllocator for BuddyPageAllocator {
                 }
             }
         }
-
+        info!("buddy allocator: Allocation failure: {:#x} pages, align {}", num_pages, align_pow2);
         self.print_alloc_failure_stats(num_pages, align_pow2);
         Err(AllocError::NoMemory)
     }
