@@ -159,78 +159,12 @@ impl BuddyPageAllocator {
             }
         }
 
-        info!(
-            "buddy allocator: Adjusted region [{:#x}, {:#x}) (original [{:#x}, {:#x}))",
-            aligned_start, aligned_end, start, end
-        );
-
-        // Try to merge with adjacent zones first
-        if let Some(_merged) = self.try_merge_with_adjacent_zones(aligned_start, aligned_end) {
-            info!("buddy allocator: Merged region with adjacent zones");
-            self.update_stats();
-            return Ok(());
-        }
-
-        // Cannot merge, create a new zone
         let zone_id = self.num_zones;
         self.zones[zone_id] = BuddySet::new(aligned_start, aligned_size, zone_id);
         self.zones[zone_id].init(aligned_start, aligned_size);
         self.num_zones += 1;
 
-        info!(
-            "buddy allocator: Added new zone {} with {} pages, total zones now: {}",
-            zone_id,
-            aligned_size / PAGE_SIZE,
-            self.num_zones
-        );
-
         Ok(())
-    }
-
-    /// Try to merge the new region with adjacent zones
-    fn try_merge_with_adjacent_zones(&mut self, start: usize, end: usize) -> Option<bool> {
-        let mut adjacent_zones: Vec<usize> = Vec::new();
-
-        for i in 0..self.num_zones {
-            let zone = &self.zones[i];
-            if zone.end_addr == start || zone.base_addr == end {
-                adjacent_zones.push(i);
-            }
-        }
-
-        if adjacent_zones.is_empty() {
-            return None;
-        }
-
-        info!(
-            "buddy allocator: Found {} adjacent zones, attempting merge",
-            adjacent_zones.len()
-        );
-
-        if adjacent_zones.len() == 1 {
-            let zone_idx = adjacent_zones[0];
-            let zone = &self.zones[zone_idx];
-
-            let (merged_start, merged_end) = if zone.end_addr == start {
-                (zone.base_addr, end)
-            } else {
-                (start, zone.end_addr)
-            };
-
-            info!(
-                "buddy allocator: Merging zone {} [{:#x}, {:#x}) with new region [{:#x}, {:#x}) into [{:#x}, {:#x})",
-                zone_idx, zone.base_addr, zone.end_addr, start, end, merged_start, merged_end
-            );
-
-            let merged_size = merged_end - merged_start;
-            self.zones[zone_idx] = BuddySet::new(merged_start, merged_size, zone_idx);
-            self.zones[zone_idx].init(merged_start, merged_size);
-
-            return Some(true);
-        }
-
-        warn!("buddy allocator: Cannot merge multiple adjacent zones yet, creating new zone");
-        None
     }
 
     /// Find the zone that contains the given address
@@ -315,11 +249,6 @@ impl BaseAllocator for BuddyPageAllocator {
     }
 
     fn add_memory(&mut self, start: usize, size: usize) -> AllocResult<()> {
-        info!(
-            "buddy allocator: Adding memory region [{:#x}, {:#x})",
-            start,
-            start + size
-        );
         self.add_memory_region(start, size)?;
         self.update_stats();
         Ok(())

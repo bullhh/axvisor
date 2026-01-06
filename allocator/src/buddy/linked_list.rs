@@ -3,8 +3,8 @@
 //! Provides O(n) insertion with sorted order (by address), enabling efficient
 //! contiguity checking for composite allocations.
 
-use core::cmp::PartialOrd;
-use log::warn;
+use core::{cmp::PartialOrd};
+use log::{error, warn};
 
 #[cfg(test)]
 extern crate alloc;
@@ -103,11 +103,13 @@ impl<T, const N: usize> StaticLinkedList<T, N> {
         T: PartialOrd,
     {
         if self.free_head.is_none() {
+            error!("free_head is None");
             return false;
         }
 
         let new_node_idx = self.free_head.unwrap();
         if new_node_idx >= N {
+            error!("new_node_idx {} is out of bounds", new_node_idx);
             return false;
         }
 

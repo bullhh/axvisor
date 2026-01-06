@@ -97,11 +97,6 @@ impl BuddySet {
             let page_addr = self.base_addr + pfn * PAGE_SIZE;
             self.dealloc_pages(page_addr, 1);
         }
-
-        debug!(
-            "zone {}: {} pages initialized in buddy system",
-            self.zone_id, self.total_pages
-        );
     }
 
     /// Allocate pages using buddy system
@@ -365,10 +360,6 @@ impl BuddySet {
             let buddy_addr = buddy_pfn * PAGE_SIZE;
 
             if !self.addr_in_zone(buddy_addr) {
-                warn!(
-                    "zone {}: Buddy block at PFN {} is not within the zone",
-                    self.zone_id, buddy_pfn
-                );
                 break;
             }
 
@@ -416,7 +407,7 @@ impl BuddySet {
 
         let success = self.free_lists[order].insert_sorted(block);
         if !success {
-            warn!(
+            error!(
                 "zone {}: Failed to push block to free list: addr={:#x}, order={}, PFN={}",
                 self.zone_id, final_addr, order, current_pfn
             );
