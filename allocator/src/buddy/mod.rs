@@ -9,6 +9,7 @@ pub mod buddy_allocator;
 pub mod buddy_block;
 pub mod buddy_set;
 pub mod linked_list;
+pub mod list_pool;
 pub mod stats;
 
 pub use buddy_allocator::BuddyPageAllocator;

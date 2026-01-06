@@ -7,30 +7,43 @@ use crate::{AllocError, AllocResult};
 use log::{debug, error, info, trace, warn};
 
 use super::{
-    buddy_block::{BuddyBlock, ZoneInfo, MAX_BLOCKS_PER_LIST},
-    linked_list::{ListNode, StaticLinkedList},
-    DEFAULT_MAX_ORDER, PAGE_SIZE,
+    buddy_block::{BuddyBlock, ZoneInfo, DEFAULT_MAX_ORDER},
+    list_pool::StaticSharedPool,
+    linked_list::ListNode,
+    PAGE_SIZE,
 };
 
+/// Pool configuration
+pub const POOL_TOTAL_LISTS: usize = 128;
+pub const POOL_LIST_CAPACITY: usize = 32;
+const POOL_MAX_ORDERS: usize = DEFAULT_MAX_ORDER + 1;
+
 /// A buddy set implementation - represents a single zone
+///
+/// Uses a shared list pool instead of fixed per-order lists to avoid
+/// memory leaks when many blocks cannot merge.
 pub struct BuddySet {
     pub(crate) base_addr: usize,
     pub(crate) end_addr: usize,
     total_pages: usize,
     zone_id: usize,
-    pub(crate) free_lists:
-        [StaticLinkedList<BuddyBlock, MAX_BLOCKS_PER_LIST>; DEFAULT_MAX_ORDER + 1],
+    /// Shared pool of lists for all orders
+    pub(crate) list_pool:
+        StaticSharedPool<POOL_TOTAL_LISTS, POOL_LIST_CAPACITY, POOL_MAX_ORDERS>,
+    /// First list index for each order (may be None if no lists allocated)
+    pub(crate) first_list_by_order: [Option<usize>; DEFAULT_MAX_ORDER + 1],
 }
 
 impl BuddySet {
-    /// Create a new buddy set for a zone
+    /// Create a new buddy set for a zone (uninitialized, must call init())
     pub const fn new(base_addr: usize, size: usize, zone_id: usize) -> Self {
         Self {
             base_addr,
             end_addr: base_addr + size,
             total_pages: size / PAGE_SIZE,
             zone_id,
-            free_lists: [const { StaticLinkedList::new() }; DEFAULT_MAX_ORDER + 1],
+            list_pool: StaticSharedPool::new(),
+            first_list_by_order: [const { None }; DEFAULT_MAX_ORDER + 1],
         }
     }
 
@@ -43,167 +56,72 @@ impl BuddySet {
         DEFAULT_MAX_ORDER
     }
 
-    /// Check if an address belongs to this zone
-    pub fn addr_in_zone(&self, addr: usize) -> bool {
-        addr >= self.base_addr && addr < self.end_addr
-    }
-
-    /// Get zone information
-    pub fn zone_info(&self) -> ZoneInfo {
-        ZoneInfo {
-            start_addr: self.base_addr,
-            end_addr: self.end_addr,
-            total_pages: self.total_pages,
-            zone_id: self.zone_id,
-        }
-    }
-
-    /// Initialize the buddy set with a memory region
-    pub fn init(&mut self, base_addr: usize, size: usize) {
-        debug!(
-            "zone {}: Initialize with region [{:#x}, {:#x})",
-            self.zone_id,
-            base_addr,
-            base_addr + size
-        );
-
-        // Align to page boundaries
-        let aligned_base = base_addr & !(PAGE_SIZE - 1);
-        let end = base_addr + size;
-        let aligned_end = (end + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
-        let aligned_size = aligned_end - aligned_base;
-
-        if aligned_size == 0 || aligned_size < PAGE_SIZE {
-            panic!("Aligned size is too small: {:#x}", aligned_size);
+    /// Add a block to the appropriate list for its order
+    /// Allocates a new list if needed
+    fn add_block_to_order(&mut self, order: usize, block: BuddyBlock) -> bool {
+        // First, try to find an existing list for this order with available space
+        if let Some(list_idx) = self.list_pool.find_available_list_for_order(order) {
+            let list = self.list_pool.get_list_mut(list_idx);
+            return list.insert_sorted(block);
         }
 
-        debug!(
-            "zone {}: Adjusted region [{:#x}, {:#x}) (original [{:#x}, {:#x}))",
-            self.zone_id, aligned_base, aligned_end, base_addr, end
-        );
-
-        self.base_addr = aligned_base;
-        self.end_addr = aligned_end;
-        self.total_pages = aligned_size / PAGE_SIZE;
-
-        // Initialize all free lists
-        for list in &mut self.free_lists {
-            list.init();
-        }
-
-        // Linux-style initialization: release pages one by one
-        // This naturally handles memory regions of any size
-        for pfn in 0..self.total_pages {
-            let page_addr = self.base_addr + pfn * PAGE_SIZE;
-            self.dealloc_pages(page_addr, 1);
-        }
-    }
-
-    /// Allocate pages using buddy system
-    pub fn alloc_pages(&mut self, num_pages: usize, alignment: usize) -> AllocResult<usize> {
-        if num_pages == 0 {
-            return Err(AllocError::InvalidParam);
-        }
-
-        // Find the required order (round up to next power of 2)
-        let required_order = if num_pages.is_power_of_two() {
-            num_pages.trailing_zeros() as usize
-        } else {
-            num_pages.next_power_of_two().trailing_zeros() as usize
-        };
-
-        if required_order > self.max_order() {
-            return Err(AllocError::NoMemory);
-        }
-
-        // Convert byte alignment to page alignment order
-        // Ensure at least page-level alignment
-        let align_pages = (alignment + PAGE_SIZE - 1) / PAGE_SIZE;
-        let align_order = align_pages.trailing_zeros() as usize;
-
-        let order_needed = required_order.max(align_order);
-        debug!(
-            "zone {}: Allocating {} pages, required order: {}, alignment: {}, order_needed: {}",
-            self.zone_id, num_pages, required_order, alignment, order_needed
-        );
-
-        // Try to find a block of the required order or higher
-        for order in order_needed..=self.max_order() {
-            if !self.free_lists[order].is_empty() {
-                let mut block = self.free_lists[order].pop_front().unwrap();
-
-                // Split down to required order
-                while block.order > order_needed {
-                    block.order -= 1;
-                    let split_size = (1 << block.order) * PAGE_SIZE;
-                    let buddy_addr = block.addr + split_size;
-
-                    // Push the second half back to free list (sorted!)
-                    let success = self.free_lists[block.order].insert_sorted(BuddyBlock {
-                        order: block.order,
-                        addr: buddy_addr,
-                    });
-                    if !success {
-                        warn!(
-                            "Failed to push buddy block to free list during split at order {}",
-                            block.order
-                        );
-                        // Put the original block back
-                        self.free_lists[block.order + 1].push_back(block);
-                        return Err(AllocError::NoMemory);
-                    }
-                }
-
-                // Verify alignment requirement
-                assert!(
-                    block.addr % alignment == 0,
-                    "Allocated address {:#x} is not aligned to {:#x} bytes ",
-                    block.addr,
-                    alignment
-                );
-
-                return Ok(block.addr);
-            }
-        }
-
-        Err(AllocError::NoMemory)
-    }
-
-    /// Find a block with the given address in the free list of the given order
-    fn find_block_in_free_list(&self, order: usize, addr: usize) -> Option<usize> {
-        let list = &self.free_lists[order];
-        let mut current_idx = list.head;
-        let mut visited = 0;
-
-        while let Some(idx) = current_idx {
-            if visited > list.len() {
-                warn!("Potential cycle detected in free list during search");
-                return None;
-            }
-
-            if let Some(node) = &list.nodes[idx] {
-                if node.data.addr == addr {
-                    return Some(idx);
-                }
-                current_idx = node.next;
+        // All existing lists are full (or no lists exist), need to allocate a new list
+        if let Some(new_list_idx) = self.list_pool.alloc_list(order) {
+            let list = self.list_pool.get_list_mut(new_list_idx);
+            let success = list.insert_sorted(block);
+            if success {
+                // Update first list pointer if this is the first list for this order
+                self.first_list_by_order[order] = Some(new_list_idx);
             } else {
-                break;
+                // Rollback allocation
+                self.list_pool.free_list(new_list_idx, order);
             }
-            visited += 1;
+            success
+        } else {
+            error!(
+                "zone {}: No free lists available for order {}",
+                self.zone_id, order
+            );
+            false
         }
+    }
 
+    /// Find a block with the given address in all lists of the given order
+    fn find_block_in_order(&self, order: usize, addr: usize) -> Option<(usize, usize)> {
+        for list_idx in self.list_pool.get_order_lists(order) {
+            let list = self.list_pool.get_list(list_idx);
+            let mut current_idx = list.head;
+            let mut visited = 0;
+
+            while let Some(node_idx) = current_idx {
+                if visited > list.len() {
+                    warn!("Potential cycle detected in free list during search");
+                    return None;
+                }
+
+                if let Some(node) = &list.nodes[node_idx] {
+                    // Early termination: list is sorted by address
+                    if node.data.addr > addr {
+                        break;
+                    }
+                    if node.data.addr == addr {
+                        return Some((list_idx, node_idx));
+                    }
+                    current_idx = node.next;
+                } else {
+                    break;
+                }
+                visited += 1;
+            }
+        }
         None
     }
 
-    /// Remove a block from the free list at the given position
-    fn remove_block_from_free_list(&mut self, order: usize, node_idx: usize) {
-        if !self.node_exists_in_list(&self.free_lists[order], node_idx) {
-            return;
-        }
+    /// Remove a block from its list
+    fn remove_block_from_order(&mut self, list_idx: usize, node_idx: usize, order: usize) {
+        let list = self.list_pool.get_list_mut(list_idx);
 
-        let list = &mut self.free_lists[order];
-
-        if node_idx >= MAX_BLOCKS_PER_LIST || list.nodes[node_idx].is_none() {
+        if node_idx >= POOL_LIST_CAPACITY || list.nodes[node_idx].is_none() {
             return;
         }
 
@@ -262,35 +180,172 @@ impl BuddySet {
             list.nodes[node_idx] = Some(dummy_node);
             list.free_head = Some(node_idx);
             list.len -= 1;
+
+            // If the list becomes empty, free it back to the pool
+            if list.is_empty() {
+                self.list_pool.free_list(list_idx, order);
+                // Update first list pointer if needed
+                if self.first_list_by_order[order] == Some(list_idx) {
+                    // Find the next list for this order, if any
+                    if let Some(next_list) = self.list_pool.get_order_lists(order).next() {
+                        self.first_list_by_order[order] = Some(next_list);
+                    } else {
+                        self.first_list_by_order[order] = None;
+                    }
+                }
+            }
         }
     }
 
-    /// Helper: check if a node exists in the list
-    fn node_exists_in_list(
-        &self,
-        list: &StaticLinkedList<BuddyBlock, MAX_BLOCKS_PER_LIST>,
-        node_idx: usize,
-    ) -> bool {
-        let mut current_idx = list.head;
-        let mut visited = 0;
+    /// Check if an address belongs to this zone
+    pub fn addr_in_zone(&self, addr: usize) -> bool {
+        addr >= self.base_addr && addr < self.end_addr
+    }
 
-        while let Some(idx) = current_idx {
-            if visited > list.len {
-                return false;
-            }
-            if idx == node_idx {
-                return true;
-            }
-            if let Some(node) = &list.nodes[idx] {
-                current_idx = node.next;
-            } else {
-                break;
-            }
-            visited += 1;
+    /// Get zone information
+    pub fn zone_info(&self) -> ZoneInfo {
+        ZoneInfo {
+            start_addr: self.base_addr,
+            end_addr: self.end_addr,
+            total_pages: self.total_pages,
+            zone_id: self.zone_id,
+        }
+    }
+
+    /// Initialize the buddy set with a memory region
+    pub fn init(&mut self, base_addr: usize, size: usize) {
+        info!(
+            "zone {}: Initialize with region [{:#x}, {:#x})",
+            self.zone_id,
+            base_addr,
+            base_addr + size
+        );
+
+        // Align to page boundaries
+        let aligned_base = base_addr & !(PAGE_SIZE - 1);
+        let end = base_addr + size;
+        let aligned_end = (end + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
+        let aligned_size = aligned_end - aligned_base;
+
+        if aligned_size == 0 || aligned_size < PAGE_SIZE {
+            panic!("Aligned size is too small: {:#x}", aligned_size);
         }
 
-        false
+        debug!(
+            "zone {}: Adjusted region [{:#x}, {:#x}) (original [{:#x}, {:#x}))",
+            self.zone_id, aligned_base, aligned_end, base_addr, end
+        );
+
+        self.base_addr = aligned_base;
+        self.end_addr = aligned_end;
+        self.total_pages = aligned_size / PAGE_SIZE;
+
+        // Initialize the shared list pool
+        self.list_pool.init();
+
+        info!("zone {}: Initialized with {} pages", self.zone_id, self.total_pages);
+        // Reset first list indices
+        for i in 0..=DEFAULT_MAX_ORDER {
+            self.first_list_by_order[i] = None;
+        }
+
+        // Linux-style initialization: release pages one by one
+        // This naturally handles memory regions of any size
+        for pfn in 0..self.total_pages {
+            let page_addr = self.base_addr + pfn * PAGE_SIZE;
+            self.dealloc_pages(page_addr, 1);
+        }
     }
+
+    /// Allocate pages using buddy system
+    pub fn alloc_pages(&mut self, num_pages: usize, alignment: usize) -> AllocResult<usize> {
+        if num_pages == 0 {
+            return Err(AllocError::InvalidParam);
+        }
+
+        // Find the required order (round up to next power of 2)
+        let required_order = if num_pages.is_power_of_two() {
+            num_pages.trailing_zeros() as usize
+        } else {
+            num_pages.next_power_of_two().trailing_zeros() as usize
+        };
+
+        if required_order > self.max_order() {
+            return Err(AllocError::NoMemory);
+        }
+
+        // Convert byte alignment to page alignment order
+        // Ensure at least page-level alignment
+        let align_pages = (alignment + PAGE_SIZE - 1) / PAGE_SIZE;
+        let align_order = align_pages.trailing_zeros() as usize;
+
+        let order_needed = required_order.max(align_order);
+        debug!(
+            "zone {}: Allocating {} pages, required order: {}, alignment: {}, order_needed: {}",
+            self.zone_id, num_pages, required_order, alignment, order_needed
+        );
+
+        // Try to find a block of the required order or higher
+        for order in order_needed..=self.max_order() {
+            // Check all lists for this order, not just the first one
+            // Collect indices first to avoid borrow issues
+            let mut list_indices = [None; POOL_TOTAL_LISTS];
+            let mut list_count = 0;
+            for list_idx in self.list_pool.get_order_lists(order) {
+                if list_count < POOL_TOTAL_LISTS {
+                    list_indices[list_count] = Some(list_idx);
+                    list_count += 1;
+                }
+            }
+
+            for i in 0..list_count {
+                if let Some(list_idx) = list_indices[i] {
+                    if !self.list_pool.get_list(list_idx).is_empty() {
+                        let mut block = self.list_pool.get_list_mut(list_idx).pop_front().unwrap();
+
+                        // Split down to required order
+                        while block.order > order_needed {
+                            block.order -= 1;
+                            let split_size = (1 << block.order) * PAGE_SIZE;
+                            let buddy_addr = block.addr + split_size;
+
+                            // Push the second half back to free list (sorted!)
+                            let success = self.add_block_to_order(
+                                block.order,
+                                BuddyBlock {
+                                    order: block.order,
+                                    addr: buddy_addr,
+                                },
+                            );
+                            if !success {
+                                warn!(
+                                    "Failed to push buddy block to free list during split at order {}",
+                                    block.order
+                                );
+                                // Put the original block back
+                                self.add_block_to_order(block.order + 1, block);
+                                return Err(AllocError::NoMemory);
+                            }
+                        }
+
+                        // Verify alignment requirement
+                        assert!(
+                            block.addr % alignment == 0,
+                            "Allocated address {:#x} is not aligned to {:#x} bytes ",
+                            block.addr,
+                            alignment
+                        );
+
+                        return Ok(block.addr);
+                    }
+                }
+            }
+        }
+
+        Err(AllocError::NoMemory)
+    }
+
+
 
     /// Deallocate pages back to buddy system with automatic merging
     pub fn dealloc_pages(&mut self, addr: usize, num_pages: usize) {
@@ -363,10 +418,11 @@ impl BuddySet {
                 break;
             }
 
-            // Try to find buddy in free list
-            if let Some(buddy_pos) = self.find_block_in_free_list(order, buddy_addr) {
+            // Try to find buddy in free lists
+            if let Some((list_idx, node_idx)) = self.find_block_in_order(order, buddy_addr) {
                 // Verify buddy has correct order and address
-                if let Some(buddy_node) = &self.free_lists[order].nodes[buddy_pos] {
+                let list = self.list_pool.get_list(list_idx);
+                if let Some(buddy_node) = &list.nodes[node_idx] {
                     if buddy_node.data.order != order || buddy_node.data.addr != buddy_addr {
                         warn!(
                             "zone {}: Inconsistent buddy block found at PFN {}",
@@ -377,7 +433,7 @@ impl BuddySet {
                 }
 
                 // Remove buddy from free list
-                self.remove_block_from_free_list(order, buddy_pos);
+                self.remove_block_from_order(list_idx, node_idx, order);
 
                 // Merge: use the aligned address (lower address)
                 current_pfn = current_pfn & buddy_pfn;
@@ -405,7 +461,7 @@ impl BuddySet {
             addr: final_addr,
         };
 
-        let success = self.free_lists[order].insert_sorted(block);
+        let success = self.add_block_to_order(order, block);
         if !success {
             error!(
                 "zone {}: Failed to push block to free list: addr={:#x}, order={}, PFN={}",
@@ -419,10 +475,11 @@ impl BuddySet {
         let mut stats = super::stats::BuddyStats::new();
         stats.total_pages = self.total_pages;
 
-        for (order, list) in self.free_lists.iter().enumerate() {
-            let pages_in_order = list.len() * (1 << order);
-            stats.free_pages_by_order[order] = list.len();
-            stats.free_pages += pages_in_order;
+        for order in 0..=DEFAULT_MAX_ORDER {
+            let list_count = self.list_pool.order_list_count(order);
+            let block_count = self.list_pool.order_total_blocks(order);
+            stats.free_pages_by_order[order] = block_count;
+            stats.free_pages += block_count * (1 << order);
         }
 
         stats.used_pages = stats.total_pages.saturating_sub(stats.free_pages);
@@ -434,15 +491,17 @@ impl BuddySet {
         let mut result = alloc::string::String::new();
 
         for order in 0..=DEFAULT_MAX_ORDER {
-            let count = self.free_lists[order].len();
+            let count = self.list_pool.order_total_blocks(order);
             if count > 0 {
                 let block_size = 1usize << order;
                 let size_mb = (block_size * PAGE_SIZE) / (1024 * 1024);
+                let list_count = self.list_pool.order_list_count(order);
                 result.push_str(&alloc::format!(
-                    "  Order {} ({} MB per block): {} free blocks\n",
+                    "  Order {} ({} MB per block): {} free blocks in {} lists\n",
                     order,
                     size_mb,
-                    count
+                    count,
+                    list_count
                 ));
             }
         }
@@ -452,7 +511,24 @@ impl BuddySet {
 
     /// Get free blocks of a specific order as an iterator
     pub fn get_free_blocks_by_order(&self, order: u32) -> impl Iterator<Item = &BuddyBlock> {
-        self.free_lists[order as usize].iter()
+        self.list_pool.get_order_lists(order as usize).flat_map(|list_idx| {
+            self.list_pool.get_list(list_idx).iter()
+        })
+    }
+
+    /// Get the number of lists allocated to a specific order
+    pub fn get_order_list_count(&self, order: usize) -> usize {
+        self.list_pool.order_list_count(order)
+    }
+
+    /// Get the total number of blocks in all lists of a specific order
+    pub fn get_order_total_blocks(&self, order: usize) -> usize {
+        self.list_pool.order_total_blocks(order)
+    }
+
+    /// Get the pool statistics
+    pub fn get_pool_stats(&self) -> super::list_pool::PoolStats {
+        self.list_pool.get_stats()
     }
 }
 

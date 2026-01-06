@@ -8,8 +8,8 @@ use alloc::vec::Vec;
 use log::{debug, error, info, warn};
 
 use super::{
-    buddy_block::{BuddyBlock, MAX_BLOCKS_PER_LIST, MAX_ZONES},
-    buddy_set::BuddySet,
+    buddy_block::{BuddyBlock, MAX_ZONES},
+    buddy_set::{BuddySet, POOL_LIST_CAPACITY},
     linked_list::StaticLinkedList,
     stats::{BuddyStats, MemoryStatsReporter},
     PAGE_SIZE,
@@ -197,17 +197,18 @@ impl BuddyPageAllocator {
         );
     }
 
-    /// Get a reference to a free list for contiguity checking
+    /// Get a reference to the first free list of an order for contiguity checking
     pub fn get_free_list(
         &self,
         zone_idx: usize,
         order: usize,
-    ) -> Option<&StaticLinkedList<BuddyBlock, MAX_BLOCKS_PER_LIST>> {
+    ) -> Option<&StaticLinkedList<BuddyBlock, POOL_LIST_CAPACITY>> {
         if zone_idx < self.num_zones {
-            Some(&self.zones[zone_idx].free_lists[order])
-        } else {
-            None
+            if let Some(list_idx) = self.zones[zone_idx].first_list_by_order[order] {
+                return Some(self.zones[zone_idx].list_pool.get_list(list_idx));
+            }
         }
+        None
     }
 
     /// Check if blocks are physically contiguous
