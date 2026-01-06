@@ -15,7 +15,7 @@ use core::{
     ptr::NonNull,
 };
 
-use axvisor_allocator::{PageAllocator, AllocResult};
+use axvisor_allocator::{AllocResult, PageAllocator};
 use kspin::SpinNoIrq;
 use strum::{IntoStaticStr, VariantArray};
 
@@ -130,7 +130,9 @@ impl GlobalAllocator {
 
     /// Gives back the allocated region to the byte allocator.
     pub fn dealloc(&self, pos: NonNull<u8>, layout: Layout) {
-        self.usages.lock().dealloc(UsageKind::RustHeap, layout.size());
+        self.usages
+            .lock()
+            .dealloc(UsageKind::RustHeap, layout.size());
         self.inner.dealloc(pos, layout);
     }
 
@@ -160,13 +162,13 @@ impl GlobalAllocator {
         let result = self.inner.alloc_pages_at(start, num_pages, align_pow2);
         if let Ok(_addr) = result {
             let size = num_pages * PAGE_SIZE;
-            self.usages.lock().alloc(kind, size);  
+            self.usages.lock().alloc(kind, size);
         }
         result
     }
 
     /// Gives back the allocated pages starts from `pos` to the page allocator.
-    pub fn dealloc_pages(&self, pos: usize, num_pages: usize, kind: UsageKind) {        
+    pub fn dealloc_pages(&self, pos: usize, num_pages: usize, kind: UsageKind) {
         let size = num_pages * PAGE_SIZE;
         self.usages.lock().dealloc(kind, size);
         self.inner.dealloc_pages(pos, num_pages);
@@ -174,7 +176,7 @@ impl GlobalAllocator {
 
     /// Returns the number of allocated bytes in the byte allocator.
     pub fn used_bytes(&self) -> usize {
-        let stats = self.inner.get_stats(); 
+        let stats = self.inner.get_stats();
         stats.heap_bytes + stats.slab_bytes
     }
 
@@ -262,4 +264,3 @@ pub fn global_add_memory(start_vaddr: usize, size: usize) -> AllocResult {
     );
     GLOBAL_ALLOCATOR.add_memory(start_vaddr, size)
 }
-

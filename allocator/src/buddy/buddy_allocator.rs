@@ -61,7 +61,11 @@ impl BuddyPageAllocator {
 
     /// Get free blocks of a specific order from a zone
     /// Returns None if zone doesn't exist
-    pub fn get_free_blocks_by_order(&self, zone_id: usize, order: u32) -> Option<impl Iterator<Item = &BuddyBlock>> {
+    pub fn get_free_blocks_by_order(
+        &self,
+        zone_id: usize,
+        order: u32,
+    ) -> Option<impl Iterator<Item = &BuddyBlock>> {
         if zone_id >= self.num_zones {
             return None;
         }
@@ -80,7 +84,8 @@ impl BuddyPageAllocator {
             result.push_str(&alloc::format!("Zone {}:\n", i));
             result.push_str(&alloc::format!(
                 "  Range: [{:#x}, {:#x})\n",
-                zone_info.start_addr, zone_info.end_addr
+                zone_info.start_addr,
+                zone_info.end_addr
             ));
             result.push_str(&alloc::format!(
                 "  Total Pages: {}\n",
@@ -224,9 +229,7 @@ impl BuddyPageAllocator {
             return Some(true);
         }
 
-        warn!(
-            "buddy allocator: Cannot merge multiple adjacent zones yet, creating new zone"
-        );
+        warn!("buddy allocator: Cannot merge multiple adjacent zones yet, creating new zone");
         None
     }
 
@@ -344,7 +347,11 @@ impl PageAllocator for BuddyPageAllocator {
                 }
             }
         }
-        info!("buddy allocator: Allocation failure: {} MB, align {}", num_pages * PAGE_SIZE / 0x100000, alignment);
+        info!(
+            "buddy allocator: Allocation failure: {} MB, align {}",
+            num_pages * PAGE_SIZE / 0x100000,
+            alignment
+        );
         self.print_alloc_failure_stats(num_pages, alignment);
         Err(AllocError::NoMemory)
     }

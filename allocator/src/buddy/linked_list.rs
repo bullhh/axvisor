@@ -66,13 +66,12 @@ impl<T, const N: usize> StaticLinkedList<T, N> {
             return false;
         }
 
-        let next_free = self.nodes[new_node_idx].as_ref()
-            .map(|n| n.next).unwrap_or(None);
+        let next_free = self.nodes[new_node_idx]
+            .as_ref()
+            .map(|n| n.next)
+            .unwrap_or(None);
 
-        self.nodes[new_node_idx] = Some(ListNode {
-            data,
-            next: None,
-        });
+        self.nodes[new_node_idx] = Some(ListNode { data, next: None });
 
         self.free_head = next_free;
 
@@ -112,8 +111,10 @@ impl<T, const N: usize> StaticLinkedList<T, N> {
             return false;
         }
 
-        let next_free = self.nodes[new_node_idx].as_ref()
-            .map(|n| n.next).unwrap_or(None);
+        let next_free = self.nodes[new_node_idx]
+            .as_ref()
+            .map(|n| n.next)
+            .unwrap_or(None);
 
         // Find insertion position
         let mut prev_idx = None;

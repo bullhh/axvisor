@@ -1,5 +1,5 @@
 //! Axvisor Memory Allocator
-//! 
+//!
 //! This module implements a high-performance memory allocator for Axvisor hypervisor,
 //! featuring:
 //! - Buddy page allocator for page-level allocation
@@ -135,24 +135,20 @@ const fn is_aligned(base_addr: usize, align: usize) -> bool {
 
 // Export our allocator implementations
 pub mod buddy;
-pub use buddy::{BuddyPageAllocator, BuddyStats, MAX_ZONES, DEFAULT_MAX_ORDER};
+pub use buddy::{BuddyPageAllocator, BuddyStats, DEFAULT_MAX_ORDER, MAX_ZONES};
 
 pub mod page_allocator;
 pub use page_allocator::CompositePageAllocator;
 
 pub mod slab_byte_allocator;
-pub use slab_byte_allocator::{SlabByteAllocator, SizeClass, SlabMeta, PageAllocatorForSlab};
+pub use slab_byte_allocator::{PageAllocatorForSlab, SizeClass, SlabByteAllocator, SlabMeta};
 
 pub mod global_allocator;
 pub use global_allocator::{GlobalAllocator, UsageStats};
 
 pub mod tracking;
 pub use tracking::{
-    AllocationInfo, AllocationTag, AllocationStats, OverallStats,
-    enable_tracking, disable_tracking, is_tracking_enabled,
-    track_allocation, track_deallocation, get_overall_stats,
-    get_stats_by_tag, get_memory_leaks, print_memory_report,
-    reset_tracking,
+    disable_tracking, enable_tracking, get_memory_leaks, get_overall_stats, get_stats_by_tag,
+    is_tracking_enabled, print_memory_report, reset_tracking, track_allocation, track_deallocation,
+    AllocationInfo, AllocationStats, AllocationTag, OverallStats,
 };
-
-

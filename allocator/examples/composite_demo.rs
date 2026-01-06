@@ -58,7 +58,7 @@ fn print_allocator_stats(allocator: &CompositePageAllocator) {
     let total = allocator.total_pages();
     let used = allocator.used_pages();
     let free = allocator.available_pages();
-    
+
     println!("   Total pages: {} ({} MB)", total, pages_to_mb(total));
     println!("   Used pages:  {} ({} MB)", used, pages_to_mb(used));
     println!("   Free pages:  {} ({} MB)", free, pages_to_mb(free));
@@ -66,13 +66,15 @@ fn print_allocator_stats(allocator: &CompositePageAllocator) {
 
 fn print_composite_stats(allocator: &CompositePageAllocator) {
     let stats = allocator.get_composite_stats();
-    
+
     println!("   Composite allocations:");
     println!("     Active: {}", stats.active_allocations);
     println!("     Total parts: {}", stats.total_parts);
-    println!("     Total pages in composite: {} ({} MB)", 
-             stats.total_pages_in_composite, 
-             pages_to_mb(stats.total_pages_in_composite));
+    println!(
+        "     Total pages in composite: {} ({} MB)",
+        stats.total_pages_in_composite,
+        pages_to_mb(stats.total_pages_in_composite)
+    );
     println!("     Slots used: {}/{}", stats.used_slots, stats.max_slots);
 }
 

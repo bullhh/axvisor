@@ -104,8 +104,7 @@ impl MemoryStatsReporter {
             error!("  Total pages: {}", zone_infos[i].total_pages);
             error!(
                 "  Free pages: {} / {}",
-                zone_stats[i].free_pages,
-                zone_infos[i].total_pages
+                zone_stats[i].free_pages, zone_infos[i].total_pages
             );
             error!("  Free blocks by order:");
 

@@ -1,23 +1,22 @@
 //! Global allocator implementation for Axvisor.
-//! 
+//!
 //! This module implements a global allocator that coordinates between
 //! buddy page allocator and slab byte allocator for optimal performance.
 
 extern crate alloc;
 
+use crate::{AllocError, AllocResult, BaseAllocator, ByteAllocator, PageAllocator};
 use core::alloc::Layout;
 use core::error;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, Ordering};
-use crate::{AllocError, AllocResult, BaseAllocator, PageAllocator, ByteAllocator};
 
 use super::buddy::BuddyStats;
 use super::page_allocator::CompositePageAllocator;
-use super::slab_byte_allocator::{SlabByteAllocator, PageAllocatorForSlab};
+use super::slab_byte_allocator::{PageAllocatorForSlab, SlabByteAllocator};
 use super::tracking::{track_allocation, track_deallocation, AllocationTag};
 use kspin::SpinNoIrq;
-use log::{debug, info, error};
-
+use log::{debug, error, info};
 
 const PAGE_SIZE: usize = 0x1000; // 4KB page size
 const MIN_HEAP_SIZE: usize = 0x8000; // 32KB minimum heap
@@ -43,8 +42,6 @@ impl Default for UsageStats {
         }
     }
 }
-
-
 
 /// Global allocator that coordinates composite and slab allocators
 pub struct GlobalAllocator {
@@ -72,11 +69,14 @@ impl GlobalAllocator {
 
     /// Initialize allocator with given memory region
     pub fn init(&self, start_vaddr: usize, size: usize) -> AllocResult<()> {
-
         if size <= MIN_HEAP_SIZE {
             return Err(AllocError::InvalidParam);
         }
-        info!("global allocator: Initialize with region [{:#x}, {:#x})", start_vaddr, start_vaddr + size);
+        info!(
+            "global allocator: Initialize with region [{:#x}, {:#x})",
+            start_vaddr,
+            start_vaddr + size
+        );
         // Initialize composite allocator first
         self.page_allocator.lock().init(start_vaddr, size);
         info!("global allocator: Composite page allocator initialized");
@@ -84,9 +84,9 @@ impl GlobalAllocator {
         // Set up page allocator for slab
         {
             let page_alloc_ptr = &mut *self.page_allocator.lock() as *mut CompositePageAllocator;
-            self.slab_allocator.lock().set_page_allocator(
-                page_alloc_ptr as *mut dyn PageAllocatorForSlab
-            );
+            self.slab_allocator
+                .lock()
+                .set_page_allocator(page_alloc_ptr as *mut dyn PageAllocatorForSlab);
         }
         info!("global allocator: Slab allocator initialized");
 
@@ -137,7 +137,7 @@ impl GlobalAllocator {
                     error!("global allocator: Slab allocator failed to allocate");
                     return Err(AllocError::NoMemory);
                 }
-            }   
+            }
         }
 
         // Use buddy allocator for large objects
@@ -145,35 +145,53 @@ impl GlobalAllocator {
         // info!("global allocator: Allocating {} bytes with alignment {}", layout.size(), layout.align());
 
         // Print memory state before allocation for large allocations
-        if layout.size() == 768 { // > 1MB
+        if layout.size() == 768 {
+            // > 1MB
             let stats_before = self.get_stats();
             info!("global allocator: Memory state before allocation:");
-            info!("  Requested: {} bytes ({} MB, {} pages)",
-                   layout.size(),
-                   layout.size() / (1024 * 1024),
-                   pages_needed);
-            info!("  Total pages: {} ({} MB)",
-                   stats_before.total_pages,
-                   (stats_before.total_pages * PAGE_SIZE) / (1024 * 1024));
-            info!("  Free pages: {} ({} MB)",
-                   stats_before.free_pages,
-                   (stats_before.free_pages * PAGE_SIZE) / (1024 * 1024));
-            info!("  Used pages: {} ({} MB)",
-                   stats_before.used_pages,
-                   (stats_before.used_pages * PAGE_SIZE) / (1024 * 1024));
+            info!(
+                "  Requested: {} bytes ({} MB, {} pages)",
+                layout.size(),
+                layout.size() / (1024 * 1024),
+                pages_needed
+            );
+            info!(
+                "  Total pages: {} ({} MB)",
+                stats_before.total_pages,
+                (stats_before.total_pages * PAGE_SIZE) / (1024 * 1024)
+            );
+            info!(
+                "  Free pages: {} ({} MB)",
+                stats_before.free_pages,
+                (stats_before.free_pages * PAGE_SIZE) / (1024 * 1024)
+            );
+            info!(
+                "  Used pages: {} ({} MB)",
+                stats_before.used_pages,
+                (stats_before.used_pages * PAGE_SIZE) / (1024 * 1024)
+            );
 
             let buddy_stats = self.get_buddy_stats();
             info!("  Buddy free blocks by order:");
             for (order, &count) in buddy_stats.free_pages_by_order.iter().enumerate() {
                 if count > 0 {
                     let size_mb = ((1 << order) * PAGE_SIZE) / (1024 * 1024);
-                    info!("    Order {}: {} blocks ({} MB each, {} MB total)",
-                           order, count, size_mb, size_mb * count);
+                    info!(
+                        "    Order {}: {} blocks ({} MB each, {} MB total)",
+                        order,
+                        count,
+                        size_mb,
+                        size_mb * count
+                    );
                 }
             }
         }
 
-        let addr = PageAllocator::alloc_pages(&mut *self.page_allocator.lock(), pages_needed, layout.align())?;
+        let addr = PageAllocator::alloc_pages(
+            &mut *self.page_allocator.lock(),
+            pages_needed,
+            layout.align(),
+        )?;
         let ptr = unsafe { NonNull::new_unchecked(addr as *mut u8) };
 
         {
@@ -184,9 +202,14 @@ impl GlobalAllocator {
         }
 
         // Print allocation success info for large allocations
-        if layout.size() > 1024 * 1024 { // > 1MB
-            info!("global allocator: Successfully allocated {} pages at {:#x} ({} MB)",
-                   pages_needed, addr, (pages_needed * PAGE_SIZE) / (1024 * 1024));
+        if layout.size() > 1024 * 1024 {
+            // > 1MB
+            info!(
+                "global allocator: Successfully allocated {} pages at {:#x} ({} MB)",
+                pages_needed,
+                addr,
+                (pages_needed * PAGE_SIZE) / (1024 * 1024)
+            );
         }
 
         track_allocation(ptr, layout, AllocationTag::Buddy);
@@ -198,9 +221,10 @@ impl GlobalAllocator {
         if !self.initialized.load(Ordering::SeqCst) {
             return Err(AllocError::NoMemory);
         }
-        
-        let addr = PageAllocator::alloc_pages(&mut *self.page_allocator.lock(), num_pages, alignment)?;
-        
+
+        let addr =
+            PageAllocator::alloc_pages(&mut *self.page_allocator.lock(), num_pages, alignment)?;
+
         // Update statistics
         {
             let mut stats = self.stats.lock();
@@ -216,7 +240,7 @@ impl GlobalAllocator {
         if !self.initialized.load(Ordering::SeqCst) {
             return;
         }
-        
+
         if layout.size() <= 2048 {
             // Try slab deallocation first
             self.slab_allocator.lock().dealloc(ptr, layout);
@@ -230,7 +254,11 @@ impl GlobalAllocator {
         // info!("global allocator: Deallocating {:?} with alignment {}", ptr, layout.align());
         // Fall back to page deallocation
         let pages_needed = (layout.size() + PAGE_SIZE - 1) / PAGE_SIZE;
-        PageAllocator::dealloc_pages(&mut *self.page_allocator.lock(), ptr.as_ptr() as usize, pages_needed);
+        PageAllocator::dealloc_pages(
+            &mut *self.page_allocator.lock(),
+            ptr.as_ptr() as usize,
+            pages_needed,
+        );
         {
             let mut stats = self.stats.lock();
             stats.used_pages = stats.used_pages.saturating_sub(pages_needed);
@@ -256,11 +284,7 @@ impl GlobalAllocator {
             stats.free_pages += num_pages;
         }
     }
-
-
 }
-
-
 
 impl GlobalAllocator {
     /// Get memory statistics
@@ -315,7 +339,12 @@ impl PageAllocator for GlobalAllocator {
         alignment: usize,
     ) -> AllocResult<usize> {
         let mut allocator = self.page_allocator.lock();
-        <CompositePageAllocator as PageAllocator>::alloc_pages_at(&mut allocator, base, num_pages, alignment)
+        <CompositePageAllocator as PageAllocator>::alloc_pages_at(
+            &mut allocator,
+            base,
+            num_pages,
+            alignment,
+        )
     }
 
     fn total_pages(&self) -> usize {
@@ -331,8 +360,6 @@ impl PageAllocator for GlobalAllocator {
     }
 }
 
-
-
 unsafe impl core::alloc::GlobalAlloc for GlobalAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         if !self.initialized.load(Ordering::SeqCst) {
@@ -340,27 +367,38 @@ unsafe impl core::alloc::GlobalAlloc for GlobalAllocator {
         }
 
         if layout.size() <= 2048 {
-            info!("global allocator: Allocating {:?} with alignment {}", layout, layout.align());
+            info!(
+                "global allocator: Allocating {:?} with alignment {}",
+                layout,
+                layout.align()
+            );
             // Use slab allocator for small objects
             // Slab allocator will request pages from page allocator internally if needed
-              match self.slab_allocator.lock().alloc(layout) {
-                  Ok(ptr) => {
-                      {
-                          let mut stats = self.stats.lock();
-                          stats.slab_bytes += layout.size();
-                      }
-                      return ptr.as_ptr();
-                  }
-                  Err(_) => {
-                    info!("global allocator: Slab allocator failed to allocate {:?}", layout);
+            match self.slab_allocator.lock().alloc(layout) {
+                Ok(ptr) => {
+                    {
+                        let mut stats = self.stats.lock();
+                        stats.slab_bytes += layout.size();
+                    }
+                    return ptr.as_ptr();
+                }
+                Err(_) => {
+                    info!(
+                        "global allocator: Slab allocator failed to allocate {:?}",
+                        layout
+                    );
                     return core::ptr::null_mut();
-                  }
-              }
+                }
+            }
         }
 
         // Use page allocator for large objects
         let pages_needed = (layout.size() + PAGE_SIZE - 1) / PAGE_SIZE;
-        match PageAllocator::alloc_pages(&mut *self.page_allocator.lock(), pages_needed, layout.align()) {
+        match PageAllocator::alloc_pages(
+            &mut *self.page_allocator.lock(),
+            pages_needed,
+            layout.align(),
+        ) {
             Ok(addr) => {
                 let mut stats = self.stats.lock();
                 stats.used_pages += pages_needed;
@@ -403,11 +441,7 @@ unsafe impl core::alloc::GlobalAlloc for GlobalAllocator {
         // Allocate new memory and copy
         let new_ptr = unsafe { core::alloc::GlobalAlloc::alloc(self, new_layout) };
         if !new_ptr.is_null() {
-            core::ptr::copy_nonoverlapping(
-                ptr,
-                new_ptr,
-                core::cmp::min(layout.size(), new_size),
-            );
+            core::ptr::copy_nonoverlapping(ptr, new_ptr, core::cmp::min(layout.size(), new_size));
             if let Some(ptr) = NonNull::new(ptr) {
                 self.dealloc(ptr, layout);
             }
@@ -425,7 +459,7 @@ mod tests {
     #[test]
     fn test_global_allocator_basic() {
         let allocator = GlobalAllocator::new();
-        
+
         // Test initialization
         let base_addr = 0x80000000;
         let size = 0x1000000; // 16MB
@@ -452,7 +486,7 @@ mod tests {
     #[test]
     fn test_stats() {
         let allocator = GlobalAllocator::new();
-        
+
         let base_addr = 0x80000000;
         let size = 0x1000000; // 16MB
         assert!(allocator.init(base_addr, size).is_ok());

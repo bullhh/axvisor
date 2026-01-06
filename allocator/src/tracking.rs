@@ -1,5 +1,5 @@
 //! Memory allocation tracking for Axvisor.
-//! 
+//!
 //! This module provides comprehensive memory allocation tracking capabilities,
 //! inspired by asterinas, with allocation backtraces, usage statistics,
 //! and memory leak detection.
@@ -97,10 +97,10 @@ impl TrackingState {
 
     pub fn track_allocation(&mut self, addr: usize, layout: Layout, tag: AllocationTag) {
         let generation = ALLOCATION_GENERATION.fetch_add(1, Ordering::SeqCst);
-        
+
         // Create simplified backtrace (in real implementation, this would capture actual frames)
         let backtrace = [addr; 8]; // Placeholder
-        
+
         let info = AllocationInfo {
             layout,
             backtrace,
@@ -110,14 +110,16 @@ impl TrackingState {
         };
 
         self.allocations.insert(addr, info);
-        
+
         // Update statistics
         self.tag_stats[tag as usize].record_allocation(layout.size());
-        
+
         // Update counters
-        let old_usage = self.current_memory_usage.fetch_add(layout.size(), Ordering::SeqCst);
+        let old_usage = self
+            .current_memory_usage
+            .fetch_add(layout.size(), Ordering::SeqCst);
         let new_usage = old_usage + layout.size();
-        
+
         // Update peak if needed
         let mut current_peak = self.peak_memory_usage.load(Ordering::SeqCst);
         while new_usage > current_peak {
@@ -131,20 +133,21 @@ impl TrackingState {
                 Err(actual) => current_peak = actual,
             }
         }
-        
+
         self.total_allocations.fetch_add(1, Ordering::SeqCst);
     }
 
     pub fn track_deallocation(&mut self, addr: usize) -> Option<AllocationInfo> {
         let info = self.allocations.remove(&addr)?;
-        
+
         // Update statistics
         self.tag_stats[info.tag as usize].record_deallocation(info.layout.size());
-        
+
         // Update counters
-        self.current_memory_usage.fetch_sub(info.layout.size(), Ordering::SeqCst);
+        self.current_memory_usage
+            .fetch_sub(info.layout.size(), Ordering::SeqCst);
         self.total_deallocations.fetch_add(1, Ordering::SeqCst);
-        
+
         Some(info)
     }
 
@@ -238,7 +241,7 @@ pub fn track_allocation(addr: NonNull<u8>, layout: Layout, tag: AllocationTag) {
     if !is_tracking_enabled() {
         return;
     }
-    
+
     let mut state = GLOBAL_TRACKING_STATE.lock();
     state.track_allocation(addr.as_ptr() as usize, layout, tag);
 }
@@ -248,7 +251,7 @@ pub fn track_deallocation(addr: NonNull<u8>) -> Option<AllocationInfo> {
     if !is_tracking_enabled() {
         return None;
     }
-    
+
     let mut state = GLOBAL_TRACKING_STATE.lock();
     state.track_deallocation(addr.as_ptr() as usize)
 }
@@ -268,7 +271,8 @@ pub fn get_stats_by_tag(tag: AllocationTag) -> AllocationStats {
 /// Get memory leaks (current allocations)
 pub fn get_memory_leaks() -> alloc::vec::Vec<(usize, AllocationInfo)> {
     let state = GLOBAL_TRACKING_STATE.lock();
-    state.get_leaks()
+    state
+        .get_leaks()
         .map(|(addr, info)| (*addr, info.clone()))
         .collect()
 }
@@ -276,15 +280,18 @@ pub fn get_memory_leaks() -> alloc::vec::Vec<(usize, AllocationInfo)> {
 /// Print memory usage report
 pub fn print_memory_report() {
     let overall = get_overall_stats();
-    
+
     log::info!("=== Memory Allocation Report ===");
     log::info!("Total allocations: {}", overall.total_allocations);
     log::info!("Total deallocations: {}", overall.total_deallocations);
     log::info!("Current allocations: {}", overall.current_allocations);
-    log::info!("Current memory usage: {} bytes", overall.current_memory_usage);
+    log::info!(
+        "Current memory usage: {} bytes",
+        overall.current_memory_usage
+    );
     log::info!("Peak memory usage: {} bytes", overall.peak_memory_usage);
     log::info!("Allocation generation: {}", overall.generation);
-    
+
     // Print per-tag statistics
     for tag in [
         AllocationTag::Kernel,
@@ -303,26 +310,33 @@ pub fn print_memory_report() {
         if stats.allocation_count > 0 {
             log::info!(
                 "{:?}: {} allocations, {} deallocations, {} bytes in use",
-                tag, stats.allocation_count, stats.deallocation_count, stats.current_bytes_in_use
+                tag,
+                stats.allocation_count,
+                stats.deallocation_count,
+                stats.current_bytes_in_use
             );
         }
     }
-    
+
     // Check for leaks
     let leaks = get_memory_leaks();
     if !leaks.is_empty() {
         log::warn!("Memory leaks detected: {} allocations", leaks.len());
-        for (addr, info) in leaks.iter().take(10) { // Show first 10 leaks
+        for (addr, info) in leaks.iter().take(10) {
+            // Show first 10 leaks
             log::warn!(
                 "Leak: addr={:#x}, size={} bytes, tag={:?}, generation={}",
-                addr, info.layout.size(), info.tag, info.generation
+                addr,
+                info.layout.size(),
+                info.tag,
+                info.generation
             );
         }
         if leaks.len() > 10 {
             log::warn!("... and {} more leaks", leaks.len() - 10);
         }
     }
-    
+
     log::info!("=== End Memory Report ===");
 }
 
@@ -358,18 +372,21 @@ mod tests {
     #[test]
     fn test_allocation_tag() {
         assert_eq!(AllocationTag::from_string("kernel"), AllocationTag::Kernel);
-        assert_eq!(AllocationTag::from_string("unknown"), AllocationTag::Unknown);
+        assert_eq!(
+            AllocationTag::from_string("unknown"),
+            AllocationTag::Unknown
+        );
     }
 
     #[test]
     fn test_allocation_stats() {
         let mut stats = AllocationStats::new();
         assert_eq!(stats.allocation_count, 0);
-        
+
         stats.record_allocation(1024);
         assert_eq!(stats.allocation_count, 1);
         assert_eq!(stats.current_bytes_in_use, 1024);
-        
+
         stats.record_deallocation(1024);
         assert_eq!(stats.deallocation_count, 1);
         assert_eq!(stats.current_bytes_in_use, 0);
@@ -379,10 +396,10 @@ mod tests {
     fn test_tracking_state() {
         let mut state = TrackingState::new();
         let layout = Layout::from_size_align(1024, 8).unwrap();
-        
+
         state.track_allocation(0x1000, layout, AllocationTag::Kernel);
         assert_eq!(state.allocations.len(), 1);
-        
+
         let info = state.track_deallocation(0x1000).unwrap();
         assert_eq!(info.layout.size(), 1024);
         assert_eq!(info.tag, AllocationTag::Kernel);

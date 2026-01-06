@@ -15,7 +15,8 @@ pub struct GlobalPage {
 impl GlobalPage {
     /// Allocate one 4K-sized page.
     pub fn alloc() -> AxResult<Self> {
-        let vaddr = global_allocator().alloc_pages(1, PAGE_SIZE, UsageKind::Global)
+        let vaddr = global_allocator()
+            .alloc_pages(1, PAGE_SIZE, UsageKind::Global)
             .map_err(|_| axerrno::AxError::from(axerrno::AxErrorKind::NoMemory))?;
         Ok(Self {
             start_vaddr: vaddr.into(),
@@ -32,7 +33,8 @@ impl GlobalPage {
 
     /// Allocate contiguous 4K-sized pages.
     pub fn alloc_contiguous(num_pages: usize, align_pow2: usize) -> AxResult<Self> {
-        let vaddr = global_allocator().alloc_pages(num_pages, align_pow2, UsageKind::Global)
+        let vaddr = global_allocator()
+            .alloc_pages(num_pages, align_pow2, UsageKind::Global)
             .map_err(|_| axerrno::AxError::from(axerrno::AxErrorKind::NoMemory))?;
         Ok(Self {
             start_vaddr: vaddr.into(),

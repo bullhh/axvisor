@@ -8,9 +8,8 @@ use log::{debug, error, info, trace, warn};
 
 use super::{
     buddy_block::{BuddyBlock, ZoneInfo, MAX_BLOCKS_PER_LIST},
-    linked_list::{StaticLinkedList, ListNode},
-    DEFAULT_MAX_ORDER,
-    PAGE_SIZE,
+    linked_list::{ListNode, StaticLinkedList},
+    DEFAULT_MAX_ORDER, PAGE_SIZE,
 };
 
 /// A buddy set implementation - represents a single zone
@@ -19,7 +18,8 @@ pub struct BuddySet {
     pub(crate) end_addr: usize,
     total_pages: usize,
     zone_id: usize,
-    pub(crate) free_lists: [StaticLinkedList<BuddyBlock, MAX_BLOCKS_PER_LIST>; DEFAULT_MAX_ORDER + 1],
+    pub(crate) free_lists:
+        [StaticLinkedList<BuddyBlock, MAX_BLOCKS_PER_LIST>; DEFAULT_MAX_ORDER + 1],
 }
 
 impl BuddySet {
@@ -62,7 +62,9 @@ impl BuddySet {
     pub fn init(&mut self, base_addr: usize, size: usize) {
         debug!(
             "zone {}: Initialize with region [{:#x}, {:#x})",
-            self.zone_id, base_addr, base_addr + size
+            self.zone_id,
+            base_addr,
+            base_addr + size
         );
 
         // Align to page boundaries
@@ -125,8 +127,10 @@ impl BuddySet {
         let align_order = align_pages.trailing_zeros() as usize;
 
         let order_needed = required_order.max(align_order);
-        debug!("zone {}: Allocating {} pages, required order: {}, alignment: {}, order_needed: {}", 
-                self.zone_id, num_pages, required_order, alignment, order_needed);
+        debug!(
+            "zone {}: Allocating {} pages, required order: {}, alignment: {}, order_needed: {}",
+            self.zone_id, num_pages, required_order, alignment, order_needed
+        );
 
         // Try to find a block of the required order or higher
         for order in order_needed..=self.max_order() {
@@ -156,9 +160,12 @@ impl BuddySet {
                 }
 
                 // Verify alignment requirement
-                assert!(block.addr % alignment == 0,
+                assert!(
+                    block.addr % alignment == 0,
                     "Allocated address {:#x} is not aligned to {:#x} bytes ",
-                    block.addr, alignment);
+                    block.addr,
+                    alignment
+                );
 
                 return Ok(block.addr);
             }
@@ -266,10 +273,7 @@ impl BuddySet {
     /// Helper: check if a node exists in the list
     fn node_exists_in_list(
         &self,
-        list: &StaticLinkedList<
-            BuddyBlock,
-            MAX_BLOCKS_PER_LIST,
-        >,
+        list: &StaticLinkedList<BuddyBlock, MAX_BLOCKS_PER_LIST>,
         node_idx: usize,
     ) -> bool {
         let mut current_idx = list.head;
@@ -296,6 +300,7 @@ impl BuddySet {
     /// Deallocate pages back to buddy system with automatic merging
     pub fn dealloc_pages(&mut self, addr: usize, num_pages: usize) {
         if num_pages == 0 {
+            warn!("zone {}: Trying to deallocate 0 pages", self.zone_id);
             return;
         }
 
@@ -358,8 +363,12 @@ impl BuddySet {
 
             // Verify buddy is within the zone
             let buddy_addr = buddy_pfn * PAGE_SIZE;
-            
+
             if !self.addr_in_zone(buddy_addr) {
+                warn!(
+                    "zone {}: Buddy block at PFN {} is not within the zone",
+                    self.zone_id, buddy_pfn
+                );
                 break;
             }
 
@@ -387,7 +396,10 @@ impl BuddySet {
 
                 trace!(
                     "zone {}: Merged blocks at PFN {} and {} to order {}",
-                    self.zone_id, current_pfn, buddy_pfn, order
+                    self.zone_id,
+                    current_pfn,
+                    buddy_pfn,
+                    order
                 );
             } else {
                 // No buddy found, cannot merge further
@@ -437,7 +449,9 @@ impl BuddySet {
                 let size_mb = (block_size * PAGE_SIZE) / (1024 * 1024);
                 result.push_str(&alloc::format!(
                     "  Order {} ({} MB per block): {} free blocks\n",
-                    order, size_mb, count
+                    order,
+                    size_mb,
+                    count
                 ));
             }
         }
