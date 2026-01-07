@@ -169,19 +169,13 @@ impl BuddySet {
         };
 
         if required_order > self.max_order() {
+            error!("required order: {}, max order: {}", required_order, self.max_order());
             return Err(AllocError::NoMemory);
         }
 
-        // Convert byte alignment to page alignment order
-        // Ensure at least page-level alignment
         let align_pages = (alignment + PAGE_SIZE - 1) / PAGE_SIZE;
         let align_order = align_pages.trailing_zeros() as usize;
-
         let order_needed = required_order.max(align_order);
-        debug!(
-            "zone {}: Allocating {} pages, required order: {}, alignment: {}, order_needed: {}",
-            self.zone_id, num_pages, required_order, alignment, order_needed
-        );
 
         // Try to find a block of the required order or higher
         for order in order_needed..=self.max_order() {
@@ -351,7 +345,7 @@ impl BuddySet {
     }
 
     /// Get statistics for this zone
-    pub fn get_stats(&self, _pool: &GlobalNodePool) -> super::stats::BuddyStats {
+    pub fn get_stats(&self) -> super::stats::BuddyStats {
         let mut stats = super::stats::BuddyStats::new();
         stats.total_pages = self.total_pages;
 
@@ -400,6 +394,169 @@ impl BuddySet {
         } else {
             0
         }
+    }
+
+    /// Allocate pages at a specific address
+    ///
+    /// This method allocates memory at a specific address. If the address range
+    /// is completely free, it will be allocated. If part of a larger free block,
+    /// the block will be split appropriately.
+    pub fn alloc_pages_at(
+        &mut self,
+        pool: &mut GlobalNodePool,
+        base: usize,
+        num_pages: usize,
+        alignment: usize,
+    ) -> AllocResult<usize> {
+        if num_pages == 0 {
+            return Err(AllocError::InvalidParam);
+        }
+
+        // Check if address belongs to this zone
+        if !self.addr_in_zone(base) {
+            error!(
+                "zone {}: Address {:#x} not in zone [{:#x}, {:#x})",
+                self.zone_id, base, self.base_addr, self.end_addr
+            );
+            return Err(AllocError::InvalidParam);
+        }
+
+        // Check page alignment
+        if base & (PAGE_SIZE - 1) != 0 {
+            error!(
+                "zone {}: Address {:#x} is not page-aligned",
+                self.zone_id, base
+            );
+            return Err(AllocError::InvalidParam);
+        }
+
+        // Check alignment requirement
+        if base % alignment != 0 {
+            error!(
+                "zone {}: Address {:#x} is not aligned to {:#x}",
+                self.zone_id, base, alignment
+            );
+            return Err(AllocError::InvalidParam);
+        }
+
+        // Check if range fits in zone
+        let size = num_pages * PAGE_SIZE;
+        if base + size > self.end_addr {
+            error!(
+                "zone {}: Allocation range [{:#x}, {:#x}) exceeds zone end {:#x}",
+                self.zone_id, base, base + size, self.end_addr
+            );
+            return Err(AllocError::InvalidParam);
+        }
+
+        // Calculate required order (must be power of 2)
+        if !num_pages.is_power_of_two() {
+            error!(
+                "zone {}: Cannot allocate {} pages: must be power of 2",
+                self.zone_id, num_pages
+            );
+            return Err(AllocError::InvalidParam);
+        }
+
+        let required_order = num_pages.trailing_zeros() as usize;
+
+        // Calculate the order for the block that contains this address
+        // The block must be aligned to its size
+        let pfn = base / PAGE_SIZE;
+        let aligned_pfn = pfn & !((1 << required_order) - 1);
+
+        // Check if the requested base is properly aligned for its size
+        if aligned_pfn != pfn {
+            error!(
+                "zone {}: Base address {:#x} (PFN {}) is not aligned for {} pages",
+                self.zone_id, base, pfn, 1 << required_order
+            );
+            return Err(AllocError::InvalidParam);
+        }
+
+        // Try to find a free block that contains this address
+        // Start from the required order and go up to larger blocks
+        for order in required_order..=self.max_order() {
+            let block_pfn = pfn & !((1 << order) - 1);
+            let block_addr = block_pfn * PAGE_SIZE;
+
+            // Check if this order can contain the request
+            if let Some((node_idx, _)) = self.find_block_in_order(pool, order, block_addr) {
+                // Verify the block is indeed in the free list and capture its data
+                let node_data = {
+                    let node = pool.get_node(node_idx).unwrap();
+                    if node.data.order != order || node.data.addr != block_addr {
+                        continue;
+                    }
+                    node.data
+                };
+
+                // Remove this block from free list
+                self.remove_block_from_order(pool, order, node_idx);
+
+                // Now we have a larger block, need to split it
+                // to keep only the part that covers [base, base + size)
+                let mut current_block = BuddyBlock {
+                    order,
+                    addr: block_addr,
+                };
+
+                // Split down to required order, keeping the requested region
+                while current_block.order > required_order {
+                    current_block.order -= 1;
+                    let split_size = (1 << current_block.order) * PAGE_SIZE;
+
+                    // Calculate buddy address
+                    let buddy_addr = current_block.addr + split_size;
+
+                    // Check if buddy is part of the requested region
+                    let request_end = base + size;
+
+                    if buddy_addr < base || buddy_addr >= request_end {
+                        // Buddy is outside the requested region, add it back to free list
+                        let success = self.add_block_to_order(
+                            pool,
+                            current_block.order,
+                            BuddyBlock {
+                                order: current_block.order,
+                                addr: buddy_addr,
+                            },
+                        );
+                        if !success {
+                            error!(
+                                "zone {}: Failed to return buddy block during split",
+                                self.zone_id
+                            );
+                            // Put the original block back and fail
+                            self.add_block_to_order(pool, order, node_data);
+                            return Err(AllocError::NoMemory);
+                        }
+                    }
+                    // If buddy is inside the requested region, keep it (don't add back)
+                }
+
+                // Verify we ended up with the correct block
+                assert!(
+                    current_block.addr == base,
+                    "zone {}: Final block address {:#x} doesn't match requested {:#x}",
+                    self.zone_id, current_block.addr, base
+                );
+                assert!(
+                    current_block.order == required_order,
+                    "zone {}: Final block order {} doesn't match required {}",
+                    self.zone_id, current_block.order, required_order
+                );
+
+                return Ok(base);
+            }
+        }
+
+        // No free block found that contains the requested address
+        error!(
+            "zone {}: No free block found for address {:#x} ({} pages)",
+            self.zone_id, base, num_pages
+        );
+        Err(AllocError::NoMemory)
     }
 }
 

@@ -105,8 +105,8 @@ impl CompositePageAllocator {
         let mut min_addr = usize::MAX;
         let mut max_addr = 0;
 
-        // Iterate from largest to smallest blocks (order 18 down to 0)
-        for order in (0..=18).rev() {
+        // Iterate from largest to smallest blocks
+        for order in (0..=DEFAULT_MAX_ORDER).rev() {
             let block_pages = 1usize << order;
 
             if remaining_pages == 0 || block_count >= MAX_PARTS_PER_ALLOC {
@@ -115,7 +115,7 @@ impl CompositePageAllocator {
 
             // Get free blocks of this order from all zones
             for zone_id in 0..self.buddy.get_zone_count() {
-                if let Some(blocks) = self.buddy.get_free_blocks_by_order(zone_id, order) {
+                if let Some(blocks) = self.buddy.get_free_blocks_by_order(zone_id, order as u32) {
                     // Iterate through sorted free blocks
                     for block in blocks {
                         if block_count >= MAX_PARTS_PER_ALLOC {
@@ -125,13 +125,8 @@ impl CompositePageAllocator {
                         let block_start = block.addr;
                         let block_end = block_start + block_pages * PAGE_SIZE;
 
-                        info!(
-                            "block_start: {:#x}, block_end: {:#x}, alignment: {}",
-                            block_start, block_end, alignment
-                        );
                         // Check alignment requirement
                         if !crate::is_aligned(block_start, alignment) {
-                            info!("block_start is not aligned");
                             continue;
                         }
 
@@ -144,9 +139,6 @@ impl CompositePageAllocator {
                             block_count += 1;
                             remaining_pages -= block_pages.min(remaining_pages);
                         } else {
-                            // Check if this block is contiguous with the range
-                            // Can be before min_addr (contiguous from left)
-                            // or after max_addr (contiguous from right)
                             if block_end == min_addr {
                                 // Block is to the left, update min_addr
                                 contiguous_blocks[block_count] = (block_start, order as u32);
@@ -176,13 +168,6 @@ impl CompositePageAllocator {
 
         // If we found enough contiguous pages, allocate them
         if remaining_pages == 0 {
-            info!("=== Contiguous Block Allocation ===");
-            info!(
-                "Found {} contiguous blocks for {} pages request",
-                block_count, num_pages
-            );
-            info!("Address range: [{:#x}, {:#x})", min_addr, max_addr);
-            info!("Total size: {} MB", (max_addr - min_addr) / (1024 * 1024));
 
             let mut parts = [(0usize, 0u32); MAX_PARTS_PER_ALLOC];
 
@@ -192,7 +177,7 @@ impl CompositePageAllocator {
                 let block_pages = 1usize << order;
                 let block_size_mb = (block_pages * PAGE_SIZE) / (1024 * 1024);
 
-                info!(
+                debug!(
                     "Block {}: addr={:#x}, order={}, pages={}, size={} MB",
                     i, addr, order, block_pages, block_size_mb
                 );
@@ -233,131 +218,25 @@ impl CompositePageAllocator {
         None
     }
 
-    /// Decompose a non-power-of-2 page count into power-of-2 chunks.
+    /// Backward decomposition: decompose excess memory back to buddy system.
     ///
-    /// This is used when deallocating memory that wasn't a power-of-2 allocation.
-    /// Each chunk is returned to the buddy separately.
-    fn dealloc_non_power_of_two(&mut self, mut addr: usize, mut pages: usize) {
-        debug!(
-            "Deallocating non-power-of-2: {} pages at {:#x}",
-            pages, addr
-        );
-
-        let mut chunk_count = 0;
-
-        while pages > 0 {
-            // Binary decomposition: find largest power of 2 <= pages
-            let highest_bit = pages.ilog2();
-            let chunk_pages = 1usize << highest_bit;
-
-            debug!(
-                "Chunk {}: dealloc {} pages at {:#x}",
-                chunk_count, chunk_pages, addr
-            );
-
-            self.buddy.dealloc_pages(addr, chunk_pages);
-
-            // Move to next chunk
-            addr += chunk_pages * PAGE_SIZE;
-            pages -= chunk_pages;
-            chunk_count += 1;
-        }
-
-        debug!("Deallocated {} chunks total", chunk_count);
-    }
-
-    /// Print detailed statistics when allocation fails.
+    /// When buddy allocates more pages than requested (e.g., 2048 for 1536 request),
+    /// this function returns excess memory back to buddy system.
     ///
-    /// This function is called separately from allocation logic to keep
-    /// the allocation path clean and fast.
-    fn print_alloc_failure_stats(&self, num_pages: usize, alignment: usize) {
-        warn!("=== Allocation Failure Details ===");
-        warn!(
-            "Requested: {} pages ({} MB), alignment: {} bytes",
-            num_pages,
-            (num_pages * PAGE_SIZE) / (1024 * 1024),
-            alignment
-        );
-
-        let buddy_stats = self.buddy.get_stats();
-        warn!("Buddy Allocator Statistics:");
-        warn!(
-            "  Total pages: {} ({} MB)",
-            buddy_stats.total_pages,
-            (buddy_stats.total_pages * PAGE_SIZE) / (1024 * 1024)
-        );
-        warn!(
-            "  Free pages: {} ({} MB)",
-            buddy_stats.free_pages,
-            (buddy_stats.free_pages * PAGE_SIZE) / (1024 * 1024)
-        );
-        warn!(
-            "  Used pages: {} ({} MB)",
-            buddy_stats.used_pages,
-            (buddy_stats.used_pages * PAGE_SIZE) / (1024 * 1024)
-        );
-
-        warn!("Free blocks by order:");
-        for (order, &count) in buddy_stats.free_pages_by_order.iter().enumerate() {
-            if count > 0 {
-                let block_size = 1usize << order;
-                let size_mb = (block_size * PAGE_SIZE) / (1024 * 1024);
-                warn!(
-                    "  Order {}: {} blocks ({} MB each, {} MB total)",
-                    order,
-                    count,
-                    size_mb,
-                    size_mb * count
-                );
-            }
-        }
-
-        warn!("=== End of Failure Details ===");
-    }
-}
-
-impl PageAllocator for CompositePageAllocator {
-    const PAGE_SIZE: usize = PAGE_SIZE;
-
-    fn alloc_pages(&mut self, num_pages: usize, alignment: usize) -> AllocResult<usize> {
-        if num_pages == 0 {
-            return Err(AllocError::InvalidParam);
-        }
-
-        let buddy_pages = if num_pages.is_power_of_two() {
-            num_pages
-        } else {
-            num_pages.next_power_of_two()
-        };
-
-        // Try to allocate from buddy system first
-        let base_addr = match self.buddy.alloc_pages(buddy_pages, alignment) {
-            Ok(addr) => addr,
-            Err(_) => {
-                // Standard allocation failed, try contiguous block combination
-                info!(
-                    "Standard allocation failed, trying contiguous block combination for {} pages",
-                    num_pages
-                );
-                if let Some(addr) = self.try_combine_contiguous_blocks(num_pages, alignment) {
-                    return Ok(addr);
-                }
-                self.print_alloc_failure_stats(num_pages, alignment);
-                return Err(AllocError::NoMemory);
-            }
-        };
-
-        // If buddy allocated exactly what was requested, no overflow handling needed
-        if buddy_pages == num_pages {
-            return Ok(base_addr);
-        }
-
-        // Backward decomposition: decompose from base address
+    /// # Algorithm
+    /// 1. Start from base address (already aligned to power-of-2)
+    /// 2. Phase 1: Allocate aligned blocks to user until needs are met
+    /// 3. Phase 2: Return remaining blocks back to buddy
+    /// 4. Ensure all blocks are properly aligned
+    fn backward_decompose_overflow(
+        &mut self,
+        base_addr: usize,
+        num_pages: usize,
+        buddy_pages: usize,
+    ) -> AllocResult<()> {
         let mut current_addr = base_addr;
         let mut remaining_user = num_pages;
         let mut remaining_buddy = buddy_pages;
-        let mut user_end_addr = base_addr;
-        let mut chunk_count = 0;
         let mut user_chunks = 0;
         let mut excess_chunks = 0;
 
@@ -408,11 +287,9 @@ impl PageAllocator for CompositePageAllocator {
                     (block_pages * PAGE_SIZE) / (1024 * 1024)
                 );
                 remaining_user -= block_pages;
-                user_end_addr = current_addr + block_pages * PAGE_SIZE;
                 current_addr += block_pages * PAGE_SIZE;
                 remaining_buddy -= block_pages;
                 user_chunks += 1;
-                chunk_count += 1;
                 found_block = true;
             }
 
@@ -430,11 +307,9 @@ impl PageAllocator for CompositePageAllocator {
                         (block_pages * PAGE_SIZE) / (1024 * 1024)
                     );
                     remaining_user -= block_pages;
-                    user_end_addr = current_addr + block_pages * PAGE_SIZE;
                     current_addr += block_pages * PAGE_SIZE;
                     remaining_buddy -= block_pages;
                     user_chunks += 1;
-                    chunk_count += 1;
                     found_block = true;
                 }
             }
@@ -445,7 +320,7 @@ impl PageAllocator for CompositePageAllocator {
                     "Cannot find aligned block for remaining_user={}, remaining_buddy={}",
                     remaining_user, remaining_buddy
                 );
-                break;
+                return Err(AllocError::InvalidParam);
             }
         }
 
@@ -483,7 +358,6 @@ impl PageAllocator for CompositePageAllocator {
             current_addr += block_pages * PAGE_SIZE;
             remaining_buddy -= block_pages;
             excess_chunks += 1;
-            chunk_count += 1;
 
             // Reset order to try larger blocks
             order = if remaining_buddy > 0 {
@@ -500,7 +374,81 @@ impl PageAllocator for CompositePageAllocator {
             remaining_user
         );
 
-        let total_excess = buddy_pages - num_pages;
+        Ok(())
+    }
+
+    /// Decompose a non-power-of-2 page count into power-of-2 chunks.
+    ///
+    /// This is used when deallocating memory that wasn't a power-of-2 allocation.
+    /// Each chunk is returned to the buddy separately.
+    fn dealloc_non_power_of_two(&mut self, mut addr: usize, mut pages: usize) {
+        debug!(
+            "Deallocating non-power-of-2: {} pages at {:#x}",
+            pages, addr
+        );
+
+        let mut chunk_count = 0;
+
+        while pages > 0 {
+            // Binary decomposition: find largest power of 2 <= pages
+            let highest_bit = pages.ilog2();
+            let chunk_pages = 1usize << highest_bit;
+
+            self.buddy.dealloc_pages(addr, chunk_pages);
+
+            // Move to next chunk
+            addr += chunk_pages * PAGE_SIZE;
+            pages -= chunk_pages;
+            chunk_count += 1;
+        }
+    }
+
+    /// Print detailed statistics when allocation fails.
+    ///
+    /// This function delegates to buddy allocator's detailed statistics reporter.
+    fn print_alloc_failure_stats(&self, num_pages: usize, alignment: usize) {
+        self.buddy.print_alloc_failure_stats(num_pages, alignment);
+    }
+}
+
+impl PageAllocator for CompositePageAllocator {
+    const PAGE_SIZE: usize = PAGE_SIZE;
+
+    fn alloc_pages(&mut self, num_pages: usize, alignment: usize) -> AllocResult<usize> {
+        if num_pages == 0 {
+            return Err(AllocError::InvalidParam);
+        }
+
+        let buddy_pages = if num_pages.is_power_of_two() {
+            num_pages
+        } else {
+            num_pages.next_power_of_two()
+        };
+
+        // Try to allocate from buddy system first
+        let base_addr = match self.buddy.alloc_pages(buddy_pages, alignment) {
+            Ok(addr) => addr,
+            Err(_) => {
+                // Standard allocation failed, try contiguous block combination
+                debug!(
+                    "Standard allocation failed, trying contiguous block combination for {} pages",
+                    num_pages
+                );
+                if let Some(addr) = self.try_combine_contiguous_blocks(num_pages, alignment) {
+                    return Ok(addr);
+                }
+                self.print_alloc_failure_stats(num_pages, alignment);
+                return Err(AllocError::NoMemory);
+            }
+        };
+
+        // If buddy allocated exactly what was requested, no overflow handling needed
+        if buddy_pages == num_pages {
+            return Ok(base_addr);
+        }
+
+        // Backward decomposition: decompose excess memory back to buddy
+        self.backward_decompose_overflow(base_addr, num_pages, buddy_pages)?;
 
         Ok(base_addr)
     }
@@ -596,36 +544,3 @@ impl Default for CompositePageAllocator {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // Skip these tests due to large static arrays causing stack overflow
-    // The list pool functionality is tested in test_list_pool.rs
-    /*
-    use alloc::boxed::Box;
-
-    // Use a Box to avoid stack overflow due to large static arrays
-    #[test]
-    fn test_contiguous_allocator_basic() {
-        let mut allocator = Box::new(CompositePageAllocator::new());
-        allocator.init(0x80000000, 0x10000000); // 256MB
-
-        // Test standard allocation (power of 2)
-        let addr1 = allocator.alloc_pages(1024, PAGE_SIZE).unwrap();
-        assert!(addr1 >= 0x80000000);
-
-        allocator.dealloc_pages(addr1, 1024);
-    }
-
-    #[test]
-    fn test_allocator_stats() {
-        let mut allocator = Box::new(CompositePageAllocator::new());
-        allocator.init(0x80000000, 0x10000000);
-
-        let buddy_stats = allocator.get_buddy_stats();
-        assert!(buddy_stats.total_pages > 0);
-        assert!(buddy_stats.free_pages > 0);
-    }
-    */
-}

@@ -122,6 +122,7 @@ impl GlobalAllocator {
     /// Smart allocation based on size
     pub fn alloc(&self, layout: Layout) -> AllocResult<NonNull<u8>> {
         if !self.initialized.load(Ordering::SeqCst) {
+            error!("global allocator: Allocator not initialized");
             return Err(AllocError::NoMemory);
         }
 
@@ -134,58 +135,14 @@ impl GlobalAllocator {
                     return Ok(ptr);
                 }
                 Err(_) => {
-                    error!("global allocator: Slab allocator failed to allocate");
-                    return Err(AllocError::NoMemory);
+                    // Fall back to page allocator if slab fails
+                    // This may happen when alignment requirements cannot be met by slab
+                    debug!("global allocator: Slab allocator failed, falling back to page allocator");
                 }
             }
         }
 
-        // Use buddy allocator for large objects
         let pages_needed = (layout.size() + PAGE_SIZE - 1) / PAGE_SIZE;
-        // info!("global allocator: Allocating {} bytes with alignment {}", layout.size(), layout.align());
-
-        // Print memory state before allocation for large allocations
-        if layout.size() == 768 {
-            // > 1MB
-            let stats_before = self.get_stats();
-            info!("global allocator: Memory state before allocation:");
-            info!(
-                "  Requested: {} bytes ({} MB, {} pages)",
-                layout.size(),
-                layout.size() / (1024 * 1024),
-                pages_needed
-            );
-            info!(
-                "  Total pages: {} ({} MB)",
-                stats_before.total_pages,
-                (stats_before.total_pages * PAGE_SIZE) / (1024 * 1024)
-            );
-            info!(
-                "  Free pages: {} ({} MB)",
-                stats_before.free_pages,
-                (stats_before.free_pages * PAGE_SIZE) / (1024 * 1024)
-            );
-            info!(
-                "  Used pages: {} ({} MB)",
-                stats_before.used_pages,
-                (stats_before.used_pages * PAGE_SIZE) / (1024 * 1024)
-            );
-
-            let buddy_stats = self.get_buddy_stats();
-            info!("  Buddy free blocks by order:");
-            for (order, &count) in buddy_stats.free_pages_by_order.iter().enumerate() {
-                if count > 0 {
-                    let size_mb = ((1 << order) * PAGE_SIZE) / (1024 * 1024);
-                    info!(
-                        "    Order {}: {} blocks ({} MB each, {} MB total)",
-                        order,
-                        count,
-                        size_mb,
-                        size_mb * count
-                    );
-                }
-            }
-        }
 
         let addr = PageAllocator::alloc_pages(
             &mut *self.page_allocator.lock(),
@@ -199,17 +156,6 @@ impl GlobalAllocator {
             stats.used_pages += pages_needed;
             stats.free_pages -= pages_needed;
             stats.heap_bytes += layout.size();
-        }
-
-        // Print allocation success info for large allocations
-        if layout.size() > 1024 * 1024 {
-            // > 1MB
-            info!(
-                "global allocator: Successfully allocated {} pages at {:#x} ({} MB)",
-                pages_needed,
-                addr,
-                (pages_needed * PAGE_SIZE) / (1024 * 1024)
-            );
         }
 
         track_allocation(ptr, layout, AllocationTag::Buddy);
@@ -383,11 +329,11 @@ unsafe impl core::alloc::GlobalAlloc for GlobalAllocator {
                     return ptr.as_ptr();
                 }
                 Err(_) => {
-                    info!(
-                        "global allocator: Slab allocator failed to allocate {:?}",
-                        layout
+                    // Fall back to page allocator if slab fails
+                    // This may happen when alignment requirements cannot be met by slab
+                    debug!(
+                        "global allocator: Slab allocator failed, falling back to page allocator"
                     );
-                    return core::ptr::null_mut();
                 }
             }
         }

@@ -10,11 +10,10 @@
 //! - **BuddyPageAllocator**: Coordinates multiple zones with shared node pool
 
 use crate::{AllocError, AllocResult, BaseAllocator, PageAllocator};
-use alloc::vec::Vec;
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 
 use super::{
-    buddy_block::{BuddyBlock, MAX_ZONES},
+    buddy_block::{BuddyBlock, MAX_ZONES, ZoneInfo},
     buddy_set::BuddySet,
     global_node_pool::GlobalNodePool,
     stats::{BuddyStats, MemoryStatsReporter},
@@ -152,7 +151,7 @@ impl BuddyPageAllocator {
         let mut total_stats = BuddyStats::new();
 
         for i in 0..self.num_zones {
-            let zone_stats = self.zones[i].get_stats(&self.global_node_pool);
+            let zone_stats = self.zones[i].get_stats();
             total_stats.add(&zone_stats);
         }
 
@@ -220,20 +219,37 @@ impl BuddyPageAllocator {
     }
 
     /// Print detailed allocation failure statistics
+    ///
+    /// This method is public to allow CompositePageAllocator to call it
+    /// when allocation fails, providing detailed per-zone failure information.
     pub fn print_alloc_failure_stats(&self, num_pages: usize, alignment: usize) {
-        let mut zone_infos = Vec::new();
-        let mut zone_stats = Vec::new();
+        let mut zone_infos: [Option<ZoneInfo>; MAX_ZONES] = [None; MAX_ZONES];
+        let mut zone_stats: [Option<BuddyStats>; MAX_ZONES] = [None; MAX_ZONES];
 
         for i in 0..self.num_zones {
-            zone_infos.push(self.zones[i].zone_info());
-            zone_stats.push(self.zones[i].get_stats(&self.global_node_pool));
+            zone_infos[i] = Some(self.zones[i].zone_info());
+            zone_stats[i] = Some(self.zones[i].get_stats());
         }
+
+        // Create slices from the initialized elements
+        let zone_infos_slice: &[ZoneInfo] = unsafe {
+            core::slice::from_raw_parts(
+                zone_infos.as_ptr() as *const ZoneInfo,
+                self.num_zones,
+            )
+        };
+        let zone_stats_slice: &[BuddyStats] = unsafe {
+            core::slice::from_raw_parts(
+                zone_stats.as_ptr() as *const BuddyStats,
+                self.num_zones,
+            )
+        };
 
         MemoryStatsReporter::print_alloc_failure_stats(
             self.num_zones,
             &self.stats,
-            &zone_infos,
-            &zone_stats,
+            zone_infos_slice,
+            zone_stats_slice,
             num_pages,
             alignment,
         );
@@ -276,12 +292,6 @@ impl PageAllocator for BuddyPageAllocator {
             match self.zones[i].alloc_pages(&mut self.global_node_pool, num_pages, alignment) {
                 Ok(addr) => {
                     self.update_stats();
-                    if num_pages > 10 {
-                        info!(
-                            "buddy allocator: Allocated {} pages at {:#x} from zone {}",
-                            num_pages, addr, i
-                        );
-                    }
                     return Ok(addr);
                 }
                 Err(_) => {
@@ -289,12 +299,11 @@ impl PageAllocator for BuddyPageAllocator {
                 }
             }
         }
-        info!(
-            "buddy allocator: Allocation failure: {} MB, align {}",
-            num_pages * PAGE_SIZE / 0x100000,
+        debug!(
+            "buddy allocator: Allocation failure: {} Byte, align {}",
+            num_pages * PAGE_SIZE,
             alignment
         );
-        self.print_alloc_failure_stats(num_pages, alignment);
         Err(AllocError::NoMemory)
     }
 
@@ -317,17 +326,15 @@ impl PageAllocator for BuddyPageAllocator {
         alignment: usize,
     ) -> AllocResult<usize> {
         if let Some(zone_idx) = self.find_zone_for_addr(base) {
-            match self
-                .zones[zone_idx]
-                .alloc_pages(&mut self.global_node_pool, num_pages, alignment)
-            {
-                Ok(addr) if addr == base => {
+            match self.zones[zone_idx].alloc_pages_at(
+                &mut self.global_node_pool,
+                base,
+                num_pages,
+                alignment,
+            ) {
+                Ok(addr) => {
                     self.update_stats();
                     Ok(addr)
-                }
-                Ok(addr) => {
-                    self.zones[zone_idx].dealloc_pages(&mut self.global_node_pool, addr, num_pages);
-                    Err(AllocError::InvalidParam)
                 }
                 Err(e) => Err(e),
             }

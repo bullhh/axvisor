@@ -3,6 +3,7 @@
 //! Provides detailed statistics tracking and failure reporting.
 
 use super::buddy_block::ZoneInfo;
+use super::PAGE_SIZE;
 
 /// Maximum order supported
 pub const DEFAULT_MAX_ORDER: usize = 28;
@@ -63,10 +64,7 @@ impl MemoryStatsReporter {
         request_align: usize,
     ) {
         use log::error;
-        const PAGE_SIZE: usize = 0x1000;
 
-        error!("========================================");
-        error!("ALLOCATION FAILURE STATISTICS");
         error!("========================================");
         error!(
             "Request: {} pages ({} KB, alignment:{})",
@@ -74,24 +72,23 @@ impl MemoryStatsReporter {
             (request_pages * PAGE_SIZE) / (1024),
             request_align
         );
-        error!("========================================");
 
         error!("Overall Memory State:");
         error!("  Total zones: {}", num_zones);
         error!(
-            "  Total pages: {} ({} MB)",
+            "  Total pages: {} ({} KB)",
             total_stats.total_pages,
-            (total_stats.total_pages * PAGE_SIZE) / (1024 * 1024)
+            (total_stats.total_pages * PAGE_SIZE) / 1024 
         );
         error!(
-            "  Free pages: {} ({} MB)",
+            "  Free pages: {} ({} KB)",
             total_stats.free_pages,
-            (total_stats.free_pages * PAGE_SIZE) / (1024 * 1024)
+            (total_stats.free_pages * PAGE_SIZE) / (1024)
         );
         error!(
-            "  Used pages: {} ({} MB)",
+            "  Used pages: {} ({} KB)",
             total_stats.used_pages,
-            (total_stats.used_pages * PAGE_SIZE) / (1024 * 1024)
+            (total_stats.used_pages * PAGE_SIZE) / (1024)
         );
         error!("========================================");
 
@@ -108,49 +105,20 @@ impl MemoryStatsReporter {
             );
             error!("  Free blocks by order:");
 
-            let mut has_free = false;
             for order in (0..=DEFAULT_MAX_ORDER).rev() {
                 let count = zone_stats[i].free_pages_by_order[order];
                 if count > 0 {
-                    has_free = true;
                     let block_size = (1 << order) * PAGE_SIZE;
-                    let total_mb = (count * block_size) / (1024 * 1024);
+                    let total_kb = (count * block_size) / (1024);
                     error!(
-                        "    Order {}: {} blocks ({} MB each, {} MB total)",
+                        "    Order {}: {} blocks ({} KB each, {} KB total)",
                         order,
-                        block_size / (1024 * 1024),
                         count,
-                        total_mb
+                        block_size / (1024),
+                        total_kb
                     );
                 }
             }
-
-            if !has_free {
-                error!("    No free blocks available");
-            }
-
-            // Print max allocatable block
-            let mut max_order = None;
-            for order in (0..=DEFAULT_MAX_ORDER).rev() {
-                if zone_stats[i].free_pages_by_order[order] > 0 {
-                    max_order = Some(order);
-                    break;
-                }
-            }
-
-            match max_order {
-                Some(order) => {
-                    error!(
-                        "  Max allocatable: Order {} ({} MB)",
-                        order,
-                        ((1 << order) * PAGE_SIZE) / (1024 * 1024)
-                    );
-                }
-                None => {
-                    error!("  Max allocatable: No memory available");
-                }
-            }
-
             error!("----------------------------------------");
         }
 
