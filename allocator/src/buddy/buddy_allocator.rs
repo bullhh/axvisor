@@ -15,7 +15,7 @@ use log::{error, info, warn};
 
 use super::{
     buddy_block::{BuddyBlock, MAX_ZONES},
-    buddy_set_pool::BuddySetPool,
+    buddy_set::BuddySet,
     global_node_pool::GlobalNodePool,
     stats::{BuddyStats, MemoryStatsReporter},
     PAGE_SIZE,
@@ -24,10 +24,10 @@ use super::{
 /// Buddy page allocator with multi-zone support and global node pool
 ///
 /// The `global_node_pool` stores linked-list nodes (ListNode<BuddyBlock>),
-/// which are used to construct the free lists in each BuddySetPool.
+/// which are used to construct the free lists in each BuddySet.
 /// Memory pages themselves are tracked by BuddyBlock values, not by this pool.
 pub struct BuddyPageAllocator {
-    zones: [BuddySetPool; MAX_ZONES],
+    zones: [BuddySet; MAX_ZONES],
     num_zones: usize,
     /// Global node pool - stores linked-list nodes (NOT memory pages)
     ///
@@ -42,7 +42,7 @@ pub struct BuddyPageAllocator {
 impl BuddyPageAllocator {
     pub const fn new() -> Self {
         Self {
-            zones: [const { BuddySetPool::empty() }; MAX_ZONES],
+            zones: [const { BuddySet::empty() }; MAX_ZONES],
             num_zones: 0,
             global_node_pool: GlobalNodePool::new(),
             stats: BuddyStats::new(),
@@ -71,7 +71,7 @@ impl BuddyPageAllocator {
             self.global_node_pool.init();
         }
 
-        self.zones[0] = BuddySetPool::new(base_addr, size, 0);
+        self.zones[0] = BuddySet::new(base_addr, size, 0);
         self.zones[0].init(&mut self.global_node_pool, base_addr, size);
         self.num_zones = 1;
 
@@ -202,7 +202,7 @@ impl BuddyPageAllocator {
         }
 
         let zone_id = self.num_zones;
-        self.zones[zone_id] = BuddySetPool::new(aligned_start, aligned_size, zone_id);
+        self.zones[zone_id] = BuddySet::new(aligned_start, aligned_size, zone_id);
         self.zones[zone_id].init(&mut self.global_node_pool, aligned_start, aligned_size);
         self.num_zones += 1;
 

@@ -17,7 +17,7 @@ use super::{
 ///
 /// Uses pooled linked lists with global node pool for efficient memory usage.
 /// All zones share the same global node pool.
-pub struct BuddySetPool {
+pub struct BuddySet {
     pub(crate) base_addr: usize,
     pub(crate) end_addr: usize,
     total_pages: usize,
@@ -26,7 +26,7 @@ pub struct BuddySetPool {
     free_lists: [PooledLinkedList; DEFAULT_MAX_ORDER + 1],
 }
 
-impl BuddySetPool {
+impl BuddySet {
     /// Create a new buddy set for a zone (uninitialized, must call init())
     pub const fn new(base_addr: usize, size: usize, zone_id: usize) -> Self {
         Self {
@@ -403,7 +403,7 @@ impl BuddySetPool {
     }
 }
 
-impl Default for BuddySetPool {
+impl Default for BuddySet {
     fn default() -> Self {
         Self::empty()
     }

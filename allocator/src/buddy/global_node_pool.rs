@@ -5,7 +5,14 @@
 
 use log::error;
 
-use super::{buddy_block::BuddyBlock, linked_list::ListNode};
+use super::buddy_block::BuddyBlock;
+
+/// Simple linked list node used by the global node pool
+#[derive(Debug, Clone, Copy)]
+pub struct ListNode<T> {
+    pub data: T,
+    pub next: Option<usize>,
+}
 
 /// Total number of nodes in the global pool
 /// Each node can hold one BuddyBlock
