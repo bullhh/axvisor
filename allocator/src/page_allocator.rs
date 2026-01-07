@@ -319,46 +319,6 @@ impl CompositePageAllocator {
 impl PageAllocator for CompositePageAllocator {
     const PAGE_SIZE: usize = PAGE_SIZE;
 
-    /// Allocate contiguous memory pages with backward decomposition overflow handling.
-    ///
-    /// # Backward Decomposition Strategy
-    ///
-    /// The buddy system always allocates power-of-2 sized blocks. When a user requests
-    /// a non-power-of-2 amount, we use backward decomposition:
-    ///
-    /// 1. Allocate next power-of-2 from buddy system
-    /// 2. Start from the base address (which is aligned to power-of-2)
-    /// 3. Decompose the block from largest to smallest orders
-    /// 4. For each chunk, decide if it goes to the user or back to buddy
-    /// 5. Ensure all chunks are properly aligned
-    ///
-    /// # Example: Request 1540 pages
-    /// - Buddy allocates: 2048 pages (2^11) at 0x80000000 (aligned to 2^11)
-    /// - Decompose from base:
-    ///   * Order 10 (1024 pages): Give to user (1024 <= 1540)
-    ///   * Order 9 (512 pages): Give to user (1024+512=1536 <= 1540)
-    ///   * Order 2 (4 pages): Give to user (1536+4=1540 == 1540) ✓
-    ///   * Remaining: 2048-1540 = 508 pages
-    ///   * Order 8 (256 pages): Return to buddy
-    ///   * Order 7 (128 pages): Return to buddy
-    ///   * Order 6 (64 pages): Return to buddy
-    ///   * Order 5 (32 pages): Return to buddy
-    ///   * Order 4 (16 pages): Return to buddy
-    ///   * Order 3 (8 pages): Return to buddy
-    ///   * Order 2 (4 pages): Return to buddy
-    /// - All chunks are properly aligned! No alignment errors.
-    ///
-    /// # Why Backward?
-    ///
-    /// Forward decomposition (starting from user's end) causes alignment issues:
-    /// - Excess starts at base + user_pages, which may not be aligned
-    /// - Example: 0x80000000 (2^11 aligned) + 1540 pages = 0x8180D000
-    /// - 0x8180D000 / 4096 = 135949, 135949 % 256 = 61 ≠ 0
-    /// - Not aligned for order 8 (256 pages)!
-    ///
-    /// Backward decomposition solves this by:
-    /// - Starting from the base address (already aligned)
-    /// - Ensuring each chunk is checked for alignment before use
     fn alloc_pages(&mut self, num_pages: usize, alignment: usize) -> AllocResult<usize> {
         if num_pages == 0 {
             return Err(AllocError::InvalidParam);

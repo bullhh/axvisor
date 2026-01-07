@@ -11,19 +11,19 @@ extern crate alloc;
 
 /// Simple static linked list node
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct ListNode<T> {
-    pub(crate) data: T,
-    pub(crate) next: Option<usize>,
+pub struct ListNode<T> {
+    pub data: T,
+    pub next: Option<usize>,
 }
 
 /// Static linked list implementation that doesn't require dynamic allocation
 #[derive(Debug)]
 pub struct StaticLinkedList<T, const N: usize> {
-    pub(crate) nodes: [Option<ListNode<T>>; N],
-    pub(crate) head: Option<usize>,
-    pub(crate) tail: Option<usize>,
-    pub(crate) free_head: Option<usize>,
-    pub(crate) len: usize,
+    pub nodes: [Option<ListNode<T>>; N],
+    pub head: Option<usize>,
+    pub tail: Option<usize>,
+    pub free_head: Option<usize>,
+    pub len: usize,
 }
 
 impl<T, const N: usize> StaticLinkedList<T, N> {

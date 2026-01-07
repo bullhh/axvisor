@@ -1,39 +1,62 @@
-//! Multi-zone buddy allocator
+//! Multi-zone buddy allocator using global node pool
 //!
 //! Provides buddy allocator with support for multiple memory zones and
-//! contiguous memory allocation from multiple orders.
+//! a single shared global node pool for all zones and orders.
+//!
+//! # Architecture
+//!
+//! - **GlobalNodePool**: Stores linked-list nodes (NOT memory pages)
+//! - **BuddySetPool**: Each zone's free lists, using nodes from GlobalNodePool
+//! - **BuddyPageAllocator**: Coordinates multiple zones with shared node pool
 
 use crate::{AllocError, AllocResult, BaseAllocator, PageAllocator};
 use alloc::vec::Vec;
-use log::{debug, error, info, warn};
+use log::{error, info, warn};
 
 use super::{
     buddy_block::{BuddyBlock, MAX_ZONES},
-    buddy_set::{BuddySet, POOL_LIST_CAPACITY},
-    linked_list::StaticLinkedList,
+    buddy_set_pool::BuddySetPool,
+    global_node_pool::GlobalNodePool,
     stats::{BuddyStats, MemoryStatsReporter},
     PAGE_SIZE,
 };
 
-/// Buddy page allocator with multi-zone support
+/// Buddy page allocator with multi-zone support and global node pool
+///
+/// The `global_node_pool` stores linked-list nodes (ListNode<BuddyBlock>),
+/// which are used to construct the free lists in each BuddySetPool.
+/// Memory pages themselves are tracked by BuddyBlock values, not by this pool.
 pub struct BuddyPageAllocator {
-    zones: [BuddySet; MAX_ZONES],
+    zones: [BuddySetPool; MAX_ZONES],
     num_zones: usize,
+    /// Global node pool - stores linked-list nodes (NOT memory pages)
+    ///
+    /// This pool is shared across all zones and orders. It allocates
+    /// ListNode<BuddyBlock> nodes which form the structure of free lists.
+    /// The actual BuddyBlock data (containing page addresses) is stored
+    /// in these nodes, not separately in this pool.
+    global_node_pool: GlobalNodePool,
     stats: BuddyStats,
 }
 
 impl BuddyPageAllocator {
     pub const fn new() -> Self {
         Self {
-            zones: [const { BuddySet::empty() }; MAX_ZONES],
+            zones: [const { BuddySetPool::empty() }; MAX_ZONES],
             num_zones: 0,
+            global_node_pool: GlobalNodePool::new(),
             stats: BuddyStats::new(),
         }
     }
 
-    /// Bootstrap with initial memory region
+    /// Initialize the global node pool and bootstrap with initial memory region
+    pub fn init(&mut self, base_addr: usize, size: usize) {
+        self.bootstrap(base_addr, size);
+    }
+
+    /// Bootstrap allocator with initial memory region
     pub fn bootstrap(&mut self, base_addr: usize, size: usize) {
-        debug!(
+        info!(
             "buddy allocator: Bootstrap with region [{:#x}, {:#x})",
             base_addr,
             base_addr + size
@@ -43,8 +66,13 @@ impl BuddyPageAllocator {
             panic!("Cannot bootstrap: maximum zones reached");
         }
 
-        self.zones[0] = BuddySet::new(base_addr, size, 0);
-        self.zones[0].init(base_addr, size);
+        // Initialize global node pool if not already initialized
+        if self.global_node_pool.get_stats().total_allocations == 0 {
+            self.global_node_pool.init();
+        }
+
+        self.zones[0] = BuddySetPool::new(base_addr, size, 0);
+        self.zones[0].init(&mut self.global_node_pool, base_addr, size);
         self.num_zones = 1;
 
         self.update_stats();
@@ -52,6 +80,11 @@ impl BuddyPageAllocator {
 
     pub fn get_stats(&self) -> BuddyStats {
         self.stats
+    }
+
+    /// Get global node pool statistics
+    pub fn get_node_pool_stats(&self) -> super::global_node_pool::GlobalPoolStats {
+        self.global_node_pool.get_stats()
     }
 
     /// Get number of zones in the allocator
@@ -69,14 +102,23 @@ impl BuddyPageAllocator {
         if zone_id >= self.num_zones {
             return None;
         }
-        Some(self.zones[zone_id].get_free_blocks_by_order(order))
+        Some(self.zones[zone_id].get_free_blocks_by_order(&self.global_node_pool, order))
     }
 
     /// Get detailed free list information as a string
     pub fn get_free_lists_info(&self) -> alloc::string::String {
         let mut result = alloc::string::String::new();
-        result.push_str("=== Multi-Zone Buddy Allocator Info ===\n");
+        result.push_str("=== Multi-Zone Buddy Allocator (Global Node Pool) ===\n");
         result.push_str(&alloc::format!("Total Zones: {}\n", self.num_zones));
+
+        let pool_stats = self.get_node_pool_stats();
+        result.push_str(&alloc::format!(
+            "Node Pool: {}/{} nodes used ({} allocs, {} deallocs)\n",
+            pool_stats.allocated_nodes,
+            pool_stats.total_nodes,
+            pool_stats.total_allocations,
+            pool_stats.total_deallocations
+        ));
         result.push_str("\n");
 
         for i in 0..self.num_zones {
@@ -100,7 +142,7 @@ impl BuddyPageAllocator {
         result.push_str(&alloc::format!("  Total pages: {}\n", stats.total_pages));
         result.push_str(&alloc::format!("  Free pages: {}\n", stats.free_pages));
         result.push_str(&alloc::format!("  Used pages: {}\n", stats.used_pages));
-        result.push_str("====================================\n");
+        result.push_str("========================================\n");
 
         result
     }
@@ -110,7 +152,7 @@ impl BuddyPageAllocator {
         let mut total_stats = BuddyStats::new();
 
         for i in 0..self.num_zones {
-            let zone_stats = self.zones[i].get_stats();
+            let zone_stats = self.zones[i].get_stats(&self.global_node_pool);
             total_stats.add(&zone_stats);
         }
 
@@ -160,8 +202,8 @@ impl BuddyPageAllocator {
         }
 
         let zone_id = self.num_zones;
-        self.zones[zone_id] = BuddySet::new(aligned_start, aligned_size, zone_id);
-        self.zones[zone_id].init(aligned_start, aligned_size);
+        self.zones[zone_id] = BuddySetPool::new(aligned_start, aligned_size, zone_id);
+        self.zones[zone_id].init(&mut self.global_node_pool, aligned_start, aligned_size);
         self.num_zones += 1;
 
         Ok(())
@@ -184,7 +226,7 @@ impl BuddyPageAllocator {
 
         for i in 0..self.num_zones {
             zone_infos.push(self.zones[i].zone_info());
-            zone_stats.push(self.zones[i].get_stats());
+            zone_stats.push(self.zones[i].get_stats(&self.global_node_pool));
         }
 
         MemoryStatsReporter::print_alloc_failure_stats(
@@ -196,45 +238,15 @@ impl BuddyPageAllocator {
             alignment,
         );
     }
+}
 
-    /// Get a reference to the first free list of an order for contiguity checking
-    pub fn get_free_list(
-        &self,
-        zone_idx: usize,
-        order: usize,
-    ) -> Option<&StaticLinkedList<BuddyBlock, POOL_LIST_CAPACITY>> {
-        if zone_idx < self.num_zones {
-            if let Some(list_idx) = self.zones[zone_idx].first_list_by_order[order] {
-                return Some(self.zones[zone_idx].list_pool.get_list(list_idx));
-            }
-        }
-        None
+impl crate::slab_byte_allocator::PageAllocatorForSlab for BuddyPageAllocator {
+    fn alloc_pages(&mut self, num_pages: usize, alignment: usize) -> AllocResult<usize> {
+        <Self as PageAllocator>::alloc_pages(self, num_pages, alignment)
     }
 
-    /// Check if blocks are physically contiguous
-    pub fn check_contiguity(&self, blocks: &[(usize, usize)]) -> bool {
-        if blocks.len() <= 1 {
-            return true;
-        }
-
-        // Sort blocks by address
-        let mut sorted_blocks = blocks.to_vec();
-        sorted_blocks.sort_by_key(|b| b.0);
-
-        // Check if blocks are adjacent
-        for i in 0..sorted_blocks.len() - 1 {
-            let (addr, order) = sorted_blocks[i];
-            let (next_addr, _) = sorted_blocks[i + 1];
-
-            let block_size = (1usize << order) * PAGE_SIZE;
-            let expected_next = addr + block_size;
-
-            if next_addr != expected_next {
-                return false;
-            }
-        }
-
-        true
+    fn dealloc_pages(&mut self, pos: usize, num_pages: usize) {
+        <Self as PageAllocator>::dealloc_pages(self, pos, num_pages);
     }
 }
 
@@ -261,7 +273,7 @@ impl PageAllocator for BuddyPageAllocator {
 
     fn alloc_pages(&mut self, num_pages: usize, alignment: usize) -> AllocResult<usize> {
         for i in 0..self.num_zones {
-            match self.zones[i].alloc_pages(num_pages, alignment) {
+            match self.zones[i].alloc_pages(&mut self.global_node_pool, num_pages, alignment) {
                 Ok(addr) => {
                     self.update_stats();
                     if num_pages > 10 {
@@ -288,7 +300,7 @@ impl PageAllocator for BuddyPageAllocator {
 
     fn dealloc_pages(&mut self, pos: usize, num_pages: usize) {
         if let Some(zone_idx) = self.find_zone_for_addr(pos) {
-            self.zones[zone_idx].dealloc_pages(pos, num_pages);
+            self.zones[zone_idx].dealloc_pages(&mut self.global_node_pool, pos, num_pages);
             self.update_stats();
         } else {
             warn!(
@@ -305,13 +317,16 @@ impl PageAllocator for BuddyPageAllocator {
         alignment: usize,
     ) -> AllocResult<usize> {
         if let Some(zone_idx) = self.find_zone_for_addr(base) {
-            match self.zones[zone_idx].alloc_pages(num_pages, alignment) {
+            match self
+                .zones[zone_idx]
+                .alloc_pages(&mut self.global_node_pool, num_pages, alignment)
+            {
                 Ok(addr) if addr == base => {
                     self.update_stats();
                     Ok(addr)
                 }
                 Ok(addr) => {
-                    self.zones[zone_idx].dealloc_pages(addr, num_pages);
+                    self.zones[zone_idx].dealloc_pages(&mut self.global_node_pool, addr, num_pages);
                     Err(AllocError::InvalidParam)
                 }
                 Err(e) => Err(e),
