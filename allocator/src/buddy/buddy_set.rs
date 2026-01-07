@@ -109,14 +109,6 @@ impl BuddySet {
 
     /// Initialize the buddy set with a memory region
     pub fn init(&mut self, pool: &mut GlobalNodePool, base_addr: usize, size: usize) {
-        info!(
-            "zone {}: Initialize with region [{:#x}, {:#x})",
-            self.zone_id,
-            base_addr,
-            base_addr + size
-        );
-
-        // Align to page boundaries
         let aligned_base = base_addr & !(PAGE_SIZE - 1);
         let end = base_addr + size;
         let aligned_end = (end + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
@@ -126,16 +118,9 @@ impl BuddySet {
             panic!("Aligned size is too small: {:#x}", aligned_size);
         }
 
-        debug!(
-            "zone {}: Adjusted region [{:#x}, {:#x}) (original [{:#x}, {:#x}))",
-            self.zone_id, aligned_base, aligned_end, base_addr, end
-        );
-
         self.base_addr = aligned_base;
         self.end_addr = aligned_end;
         self.total_pages = aligned_size / PAGE_SIZE;
-
-        info!("zone {}: Initialized with {} pages", self.zone_id, self.total_pages);
 
         // Reset free lists
         for list in &mut self.free_lists {
@@ -315,13 +300,6 @@ impl BuddySet {
                 // Move to next order
                 order += 1;
 
-                trace!(
-                    "zone {}: Merged blocks at PFN {} and {} to order {}",
-                    self.zone_id,
-                    current_pfn,
-                    buddy_pfn,
-                    order
-                );
             } else {
                 // No buddy found, cannot merge further
                 break;
@@ -359,31 +337,14 @@ impl BuddySet {
         stats
     }
 
-    /// Get detailed free list information as a string
-    pub fn get_free_lists_info(&self) -> alloc::string::String {
-        let mut result = alloc::string::String::new();
 
-        for order in 0..=DEFAULT_MAX_ORDER {
-            let count = self.free_lists[order].len();
-            if count > 0 {
-                let block_size = 1usize << order;
-                let size_mb = (block_size * PAGE_SIZE) / (1024 * 1024);
-                result.push_str(&alloc::format!(
-                    "  Order {} ({} MB per block): {} free blocks\n",
-                    order, size_mb, count
-                ));
-            }
-        }
-
-        result
-    }
 
     /// Get free blocks of a specific order as an iterator
     pub fn get_free_blocks_by_order<'a>(
         &'a self,
         pool: &'a GlobalNodePool,
         order: u32,
-    ) -> impl Iterator<Item = &'a BuddyBlock> {
+    ) -> super::pooled_list::PooledListIter<'a> {
         self.free_lists[order as usize].iter(pool)
     }
 

@@ -145,10 +145,3 @@ pub use slab_byte_allocator::{PageAllocatorForSlab, SizeClass, SlabByteAllocator
 
 pub mod global_allocator;
 pub use global_allocator::{GlobalAllocator, UsageStats};
-
-pub mod tracking;
-pub use tracking::{
-    disable_tracking, enable_tracking, get_memory_leaks, get_overall_stats, get_stats_by_tag,
-    is_tracking_enabled, print_memory_report, reset_tracking, track_allocation, track_deallocation,
-    AllocationInfo, AllocationStats, AllocationTag, OverallStats,
-};

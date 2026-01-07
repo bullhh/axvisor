@@ -25,23 +25,25 @@
 //! The buddy system always allocates power-of-2 sized blocks. When a user requests
 //! a non-power-of-2 amount, we use backward decomposition:
 //!
-//! 1. Allocate next power-of-2 from buddy system
-//! 2. Start from the base address (which is aligned to power-of-2)
-//! 3. Decompose the block from largest to smallest orders
-//! 4. For each chunk, decide if it goes to the user or back to buddy
-//! 5. Ensure all chunks are properly aligned
+//! 1. Allocate next power-of-2 from buddy system (e.g., 2048 pages for 1536 request)
+//! 2. The user gets the first `num_pages` pages (e.g., 1536 pages)
+//! 3. Return the excess pages (e.g., 512 pages) back to buddy system
 //!
-//! # Why Backward?
+//! # Why Backward Decomposition?
 //!
-//! Forward decomposition (starting from user's end) causes alignment issues:
-//! - Excess starts at base + user_pages, which may not be aligned
-//! - Example: 0x80000000 (2^11 aligned) + 1540 pages = 0x8180D000
-//! - 0x8180D000 / 4096 = 135949, 135949 % 256 = 61 ≠ 0
-//! - Not aligned for order 8 (256 pages)!
+//! We return excess memory by decomposing from the end (back to front):
+//! - Start from end_addr = base_addr + buddy_pages * PAGE_SIZE (aligned)
+//! - Decompose excess into power-of-2 chunks from back to front
+//! - Each chunk is guaranteed to be aligned because we start from aligned boundary
 //!
-//! Backward decomposition solves this by:
-//! - Starting from the base address (already aligned)
-//! - Ensuring each chunk is checked for alignment before use
+//! Example with 2048 pages allocated, 1537 requested (511 excess):
+//! - End addr: 0x80080000 (2048 pages aligned)
+//! - Release 256 pages at 0x80040000 (aligned to 256)
+//! - Release 128 pages at 0x80020000 (aligned to 128)
+//! - Release 64 pages at 0x80010000 (aligned to 64)
+//! - ... and so on
+//!
+//! All chunks are properly aligned!
 
 use crate::buddy::{BuddyPageAllocator, DEFAULT_MAX_ORDER};
 use crate::{AllocError, AllocResult, BaseAllocator, PageAllocator};
@@ -224,155 +226,64 @@ impl CompositePageAllocator {
     /// this function returns excess memory back to buddy system.
     ///
     /// # Algorithm
-    /// 1. Start from base address (already aligned to power-of-2)
-    /// 2. Phase 1: Allocate aligned blocks to user until needs are met
-    /// 3. Phase 2: Return remaining blocks back to buddy
-    /// 4. Ensure all blocks are properly aligned
+    /// 1. Calculate excess pages: buddy_pages - num_pages
+    /// 2. Start from end address (base_addr + buddy_pages * PAGE_SIZE), which is aligned
+    /// 3. Decompose excess from back to front using largest power-of-2 chunks
+    /// 4. Each chunk is guaranteed to be aligned because we start from aligned boundary
     fn backward_decompose_overflow(
         &mut self,
         base_addr: usize,
         num_pages: usize,
         buddy_pages: usize,
     ) -> AllocResult<()> {
-        let mut current_addr = base_addr;
-        let mut remaining_user = num_pages;
-        let mut remaining_buddy = buddy_pages;
-        let mut user_chunks = 0;
-        let mut excess_chunks = 0;
+        let excess = buddy_pages - num_pages;
 
-        // Start from the order of buddy allocation
-        let mut order = if buddy_pages > 0 {
-            (buddy_pages.ilog2() as u32).min(DEFAULT_MAX_ORDER as u32) as usize
-        } else {
-            0
-        };
-
-        // Phase 1: Allocate to user until their needs are met
-        // Use binary decomposition: always use the largest block that fits
-        while remaining_user > 0 && remaining_buddy > 0 {
-            // Find the largest power of 2 that fits in remaining_user
-            let max_order = if remaining_user > 0 {
-                (remaining_user.ilog2() as u32).min(DEFAULT_MAX_ORDER as u32) as usize
-            } else {
-                0
-            };
-
-            // Start from the largest possible order
-            order = max_order;
-
-            let mut found_block = false;
-            while order > 0 && !found_block {
-                let block_pages = 1usize << order;
-
-                if block_pages > remaining_buddy {
-                    order -= 1;
-                    continue;
-                }
-
-                // Check alignment at current_addr
-                let pfn = current_addr / PAGE_SIZE;
-                if pfn & ((1 << order) - 1) != 0 {
-                    // Not aligned, try smaller order
-                    order -= 1;
-                    continue;
-                }
-
-                // Found a valid aligned block, give it to user
-                debug!(
-                    "  User chunk #{}: addr={:#x}, pages={}, order={}, size={} MB",
-                    user_chunks,
-                    current_addr,
-                    block_pages,
-                    order,
-                    (block_pages * PAGE_SIZE) / (1024 * 1024)
-                );
-                remaining_user -= block_pages;
-                current_addr += block_pages * PAGE_SIZE;
-                remaining_buddy -= block_pages;
-                user_chunks += 1;
-                found_block = true;
-            }
-
-            // If no aligned block found, try order 0 (1 page)
-            if !found_block && remaining_user > 0 && remaining_buddy > 0 {
-                let block_pages = 1usize;
-                let pfn = current_addr / PAGE_SIZE;
-                if pfn & ((1 << 0) - 1) == 0 && block_pages <= remaining_buddy {
-                    info!(
-                        "  User chunk #{}: addr={:#x}, pages={}, order={}, size={} MB",
-                        user_chunks,
-                        current_addr,
-                        block_pages,
-                        0,
-                        (block_pages * PAGE_SIZE) / (1024 * 1024)
-                    );
-                    remaining_user -= block_pages;
-                    current_addr += block_pages * PAGE_SIZE;
-                    remaining_buddy -= block_pages;
-                    user_chunks += 1;
-                    found_block = true;
-                }
-            }
-
-            // Safety check to avoid infinite loop
-            if !found_block {
-                warn!(
-                    "Cannot find aligned block for remaining_user={}, remaining_buddy={}",
-                    remaining_user, remaining_buddy
-                );
-                return Err(AllocError::InvalidParam);
-            }
+        if excess == 0 {
+            return Ok(());
         }
 
-        // Phase 2: Return remaining blocks back to buddy
-        while remaining_buddy > 0 {
-            let block_pages = 1usize << order;
+        // Start from end address (aligned to buddy_pages), work backwards
+        let end_addr = base_addr + buddy_pages * PAGE_SIZE;
+        let mut remaining = excess;
+        let mut current_addr = end_addr;
 
-            if block_pages > remaining_buddy {
-                if order > 0 {
-                    order -= 1;
-                }
-                continue;
-            }
+        debug!(
+            "Backward decomposing: base={:#x}, user_pages={}, buddy_pages={}, excess={}",
+            base_addr, num_pages, buddy_pages, excess
+        );
 
-            // Check alignment
+        // Decompose excess into power-of-2 chunks from back to front
+        // This ensures all chunks are aligned because end_addr is aligned
+        while remaining > 0 {
+            // Find largest power of 2 that fits in remaining
+            let highest_bit = remaining.ilog2();
+            let chunk_pages = 1usize << highest_bit;
+
+            // Move backward by chunk_pages
+            current_addr -= chunk_pages * PAGE_SIZE;
+
+            // Check alignment (should always pass if logic is correct)
             let pfn = current_addr / PAGE_SIZE;
-            if pfn & ((1 << order) - 1) != 0 {
-                if order > 0 {
-                    order -= 1;
-                }
-                continue;
+            if pfn & (chunk_pages - 1) != 0 {
+                warn!(
+                    "  Address {:#x} not aligned for {} pages, pfn={}, mask={}",
+                    current_addr, chunk_pages, pfn, chunk_pages - 1
+                );
+                return Err(AllocError::InvalidParam);
             }
 
             // Return this chunk to buddy
             debug!(
-                "  Excess chunk #{}: addr={:#x}, pages={}, order={}, size={} MB",
-                excess_chunks,
+                "  Returning excess: addr={:#x}, pages={}, order={}, size={} MB",
                 current_addr,
-                block_pages,
-                order,
-                (block_pages * PAGE_SIZE) / (1024 * 1024)
+                chunk_pages,
+                highest_bit,
+                (chunk_pages * PAGE_SIZE) / (1024 * 1024)
             );
-            self.buddy.dealloc_pages(current_addr, block_pages);
+            self.buddy.dealloc_pages(current_addr, chunk_pages);
 
-            current_addr += block_pages * PAGE_SIZE;
-            remaining_buddy -= block_pages;
-            excess_chunks += 1;
-
-            // Reset order to try larger blocks
-            order = if remaining_buddy > 0 {
-                (remaining_buddy.ilog2() as u32).min(DEFAULT_MAX_ORDER as u32) as usize
-            } else {
-                0
-            };
+            remaining -= chunk_pages;
         }
-
-        // Verify we allocated enough to the user
-        debug_assert!(
-            remaining_user == 0,
-            "Failed to allocate all user pages: {} remaining",
-            remaining_user
-        );
 
         Ok(())
     }
@@ -387,8 +298,6 @@ impl CompositePageAllocator {
             pages, addr
         );
 
-        let mut chunk_count = 0;
-
         while pages > 0 {
             // Binary decomposition: find largest power of 2 <= pages
             let highest_bit = pages.ilog2();
@@ -399,7 +308,6 @@ impl CompositePageAllocator {
             // Move to next chunk
             addr += chunk_pages * PAGE_SIZE;
             pages -= chunk_pages;
-            chunk_count += 1;
         }
     }
 
@@ -507,11 +415,6 @@ impl CompositePageAllocator {
     /// Get buddy allocator statistics
     pub fn get_buddy_stats(&self) -> crate::buddy::BuddyStats {
         self.buddy.get_stats()
-    }
-
-    /// Get detailed free list information as a string
-    pub fn get_free_lists_info(&self) -> alloc::string::String {
-        self.buddy.get_free_lists_info()
     }
 }
 

@@ -25,13 +25,6 @@ pub const GLOBAL_TOTAL_NODES: usize = 512;
 pub const GLOBAL_TOTAL_NODES: usize = 8192;
 
 /// Global node pool - all zones and orders share nodes from this pool
-///
-/// The pool maintains:
-/// - A pool of free list nodes (ListNode<BuddyBlock>)
-/// - Tracking of which list each node belongs to (for debugging and validation)
-///
-/// Each BuddySet (zone) manages its own linked lists, but all lists
-/// draw nodes from this shared pool.
 pub struct GlobalNodePool {
     /// Array of all nodes in the pool
     nodes: [Option<ListNode<BuddyBlock>>; GLOBAL_TOTAL_NODES],

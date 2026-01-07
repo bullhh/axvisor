@@ -12,11 +12,8 @@ use super::{buddy_block::BuddyBlock, global_node_pool::GlobalNodePool};
 /// This maintains only the list structure (head/tail/len), while
 /// all nodes are allocated from the global pool.
 pub struct PooledLinkedList {
-    /// Index of head node in global pool
     head: Option<usize>,
-    /// Index of tail node in global pool
     tail: Option<usize>,
-    /// Number of nodes in this list
     len: usize,
 }
 
@@ -33,7 +30,6 @@ impl PooledLinkedList {
     /// Insert element in sorted order (ascending by address)
     /// This is used for buddy free lists to enable efficient contiguity checking
     pub fn insert_sorted(&mut self, pool: &mut GlobalNodePool, data: BuddyBlock) -> bool {
-        // Allocate a node from the global pool
         let new_node_idx = match pool.alloc_node() {
             Some(idx) => idx,
             None => {
@@ -49,14 +45,14 @@ impl PooledLinkedList {
 
         while let Some(idx) = current_idx {
             if visited > self.len {
-                warn!("Potential cycle detected during insert");
+                error!("Potential cycle detected during insert");
                 // Deallocate the node
                 pool.dealloc_node(new_node_idx);
                 return false;
             }
 
             if let Some(node) = pool.get_node(idx) {
-                if node.data > data {
+                if node.data.addr > data.addr {
                     break; // Found position
                 }
                 prev_idx = current_idx;
@@ -144,7 +140,7 @@ impl PooledLinkedList {
 
         while let Some(idx) = current_idx {
             if visited > self.len {
-                warn!("Potential cycle detected during search");
+                error!("Potential cycle detected during search");
                 return None;
             }
 

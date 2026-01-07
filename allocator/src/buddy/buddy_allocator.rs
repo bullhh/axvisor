@@ -28,12 +28,6 @@ use super::{
 pub struct BuddyPageAllocator {
     zones: [BuddySet; MAX_ZONES],
     num_zones: usize,
-    /// Global node pool - stores linked-list nodes (NOT memory pages)
-    ///
-    /// This pool is shared across all zones and orders. It allocates
-    /// ListNode<BuddyBlock> nodes which form the structure of free lists.
-    /// The actual BuddyBlock data (containing page addresses) is stored
-    /// in these nodes, not separately in this pool.
     global_node_pool: GlobalNodePool,
     stats: BuddyStats,
 }
@@ -93,57 +87,15 @@ impl BuddyPageAllocator {
 
     /// Get free blocks of a specific order from a zone
     /// Returns None if zone doesn't exist
-    pub fn get_free_blocks_by_order(
-        &self,
+    pub fn get_free_blocks_by_order<'a>(
+        &'a self,
         zone_id: usize,
         order: u32,
-    ) -> Option<impl Iterator<Item = &BuddyBlock>> {
+    ) -> Option<super::pooled_list::PooledListIter<'a>> {
         if zone_id >= self.num_zones {
             return None;
         }
         Some(self.zones[zone_id].get_free_blocks_by_order(&self.global_node_pool, order))
-    }
-
-    /// Get detailed free list information as a string
-    pub fn get_free_lists_info(&self) -> alloc::string::String {
-        let mut result = alloc::string::String::new();
-        result.push_str("=== Multi-Zone Buddy Allocator (Global Node Pool) ===\n");
-        result.push_str(&alloc::format!("Total Zones: {}\n", self.num_zones));
-
-        let pool_stats = self.get_node_pool_stats();
-        result.push_str(&alloc::format!(
-            "Node Pool: {}/{} nodes used ({} allocs, {} deallocs)\n",
-            pool_stats.allocated_nodes,
-            pool_stats.total_nodes,
-            pool_stats.total_allocations,
-            pool_stats.total_deallocations
-        ));
-        result.push_str("\n");
-
-        for i in 0..self.num_zones {
-            let zone_info = self.zones[i].zone_info();
-            result.push_str(&alloc::format!("Zone {}:\n", i));
-            result.push_str(&alloc::format!(
-                "  Range: [{:#x}, {:#x})\n",
-                zone_info.start_addr,
-                zone_info.end_addr
-            ));
-            result.push_str(&alloc::format!(
-                "  Total Pages: {}\n",
-                zone_info.total_pages
-            ));
-            result.push_str(&self.zones[i].get_free_lists_info());
-            result.push_str("\n");
-        }
-
-        let stats = self.get_stats();
-        result.push_str("Overall Summary:\n");
-        result.push_str(&alloc::format!("  Total pages: {}\n", stats.total_pages));
-        result.push_str(&alloc::format!("  Free pages: {}\n", stats.free_pages));
-        result.push_str(&alloc::format!("  Used pages: {}\n", stats.used_pages));
-        result.push_str("========================================\n");
-
-        result
     }
 
     /// Update aggregated statistics from all zones

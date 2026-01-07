@@ -7,14 +7,12 @@ extern crate alloc;
 
 use crate::{AllocError, AllocResult, BaseAllocator, ByteAllocator, PageAllocator};
 use core::alloc::Layout;
-use core::error;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use super::buddy::BuddyStats;
 use super::page_allocator::CompositePageAllocator;
 use super::slab_byte_allocator::{PageAllocatorForSlab, SlabByteAllocator};
-use super::tracking::{track_allocation, track_deallocation, AllocationTag};
 use kspin::SpinNoIrq;
 use log::{debug, error, info};
 
@@ -131,7 +129,6 @@ impl GlobalAllocator {
             match self.slab_allocator.lock().alloc(layout) {
                 Ok(ptr) => {
                     self.stats.lock().slab_bytes += layout.size();
-                    track_allocation(ptr, layout, AllocationTag::Slab);
                     return Ok(ptr);
                 }
                 Err(_) => {
@@ -158,7 +155,6 @@ impl GlobalAllocator {
             stats.heap_bytes += layout.size();
         }
 
-        track_allocation(ptr, layout, AllocationTag::Buddy);
         Ok(ptr)
     }
 
@@ -194,7 +190,6 @@ impl GlobalAllocator {
                 let mut stats = self.stats.lock();
                 stats.slab_bytes = stats.slab_bytes.saturating_sub(layout.size());
             }
-            track_deallocation(ptr);
             return;
         }
         // info!("global allocator: Deallocating {:?} with alignment {}", ptr, layout.align());
@@ -211,7 +206,6 @@ impl GlobalAllocator {
             stats.free_pages += pages_needed;
             stats.heap_bytes = stats.heap_bytes.saturating_sub(layout.size());
         }
-        track_deallocation(ptr);
     }
 
     /// Deallocate pages
@@ -241,11 +235,6 @@ impl GlobalAllocator {
     /// Get buddy allocator statistics
     pub fn get_buddy_stats(&self) -> BuddyStats {
         self.page_allocator.lock().get_buddy_stats()
-    }
-
-    /// Get detailed free list information as a string
-    pub fn get_free_lists_info(&self) -> alloc::string::String {
-        self.page_allocator.lock().get_free_lists_info()
     }
 }
 

@@ -4,9 +4,6 @@
 
 use core::cmp::PartialOrd;
 
-/// Maximum number of blocks in each free list
-pub const MAX_BLOCKS_PER_LIST: usize = 64;
-
 /// Maximum number of memory zones supported
 pub const MAX_ZONES: usize = 10;
 
