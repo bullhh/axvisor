@@ -7,6 +7,7 @@ extern crate alloc;
 
 use crate::{AllocError, AllocResult, BaseAllocator, ByteAllocator, PageAllocator};
 use core::alloc::Layout;
+use core::error;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, Ordering};
 
@@ -123,17 +124,23 @@ impl<const PAGE_SIZE: usize> GlobalAllocator<PAGE_SIZE> {
             return Err(AllocError::NoMemory);
         }
 
-        if layout.size() <= 2048 {
-            // Use slab allocator for small objects
+
+        if layout.size() <= 2048 && layout.align() <= 2048 {
+            // Try slab allocator first
             match self.slab_allocator.lock().alloc(layout) {
                 Ok(ptr) => {
                     self.stats.lock().slab_bytes += layout.size();
                     return Ok(ptr);
                 }
-                Err(_) => {
-                    // Fall back to page allocator if slab fails
-                    // This may happen when alignment requirements cannot be met by slab
-                    debug!("global allocator: Slab allocator failed, falling back to page allocator");
+                Err(e) => {
+                    // Slab allocator should handle all requests that satisfy constraints
+                    // If it fails, it's a real error (e.g., out of memory)
+                    // Log for debugging
+                    error!(
+                        "global allocator: Slab allocator failed for layout {:?}, error: {:?}, falling back to page allocator",
+                        layout, e
+                    );
+                    return Err(e);
                 }
             }
         }
@@ -182,8 +189,9 @@ impl<const PAGE_SIZE: usize> GlobalAllocator<PAGE_SIZE> {
             return;
         }
 
-        if layout.size() <= 2048 {
-            // Try slab deallocation first
+        if layout.size() <= 2048 && layout.align() <= 2048 {
+            // This memory must have been allocated by slab allocator
+            // If dealloc fails (not found in slab), it's a critical error
             self.slab_allocator.lock().dealloc(ptr, layout);
             {
                 let mut stats = self.stats.lock();
@@ -191,8 +199,8 @@ impl<const PAGE_SIZE: usize> GlobalAllocator<PAGE_SIZE> {
             }
             return;
         }
-        // info!("global allocator: Deallocating {:?} with alignment {}", ptr, layout.align());
-        // Fall back to page deallocation
+
+        // This memory was allocated by page allocator
         let pages_needed = (layout.size() + PAGE_SIZE - 1) / PAGE_SIZE;
         PageAllocator::dealloc_pages(
             &mut *self.page_allocator.lock(),
@@ -342,14 +350,8 @@ unsafe impl<const PAGE_SIZE: usize> core::alloc::GlobalAlloc for GlobalAllocator
             return core::ptr::null_mut();
         }
 
-        if layout.size() <= 2048 {
-            info!(
-                "global allocator: Allocating {:?} with alignment {}",
-                layout,
-                layout.align()
-            );
-            // Use slab allocator for small objects
-            // Slab allocator will request pages from page allocator internally if needed
+
+        if layout.size() <= 2048 && layout.align() <= 2048 {
             match self.slab_allocator.lock().alloc(layout) {
                 Ok(ptr) => {
                     {
@@ -358,17 +360,17 @@ unsafe impl<const PAGE_SIZE: usize> core::alloc::GlobalAlloc for GlobalAllocator
                     }
                     return ptr.as_ptr();
                 }
-                Err(_) => {
-                    // Fall back to page allocator if slab fails
-                    // This may happen when alignment requirements cannot be met by slab
-                    debug!(
-                        "global allocator: Slab allocator failed, falling back to page allocator"
+                Err(e) => {
+                    info!(
+                        "global allocator: Slab allocator failed for layout {:?}, error: {:?}, falling back to page allocator",
+                        layout, e
                     );
+                    return  core::ptr::null_mut();
                 }
             }
         }
 
-        // Use page allocator for large objects
+        // Use page allocator for large objects or high alignment requirements
         let pages_needed = (layout.size() + Self::PAGE_SIZE - 1) / Self::PAGE_SIZE;
         match PageAllocator::alloc_pages(
             &mut *self.page_allocator.lock(),

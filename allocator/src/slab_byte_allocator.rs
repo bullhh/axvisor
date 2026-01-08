@@ -31,11 +31,16 @@ impl SizeClass {
     pub const COUNT: usize = 9;
 
     pub fn from_layout(layout: Layout) -> Option<Self> {
-        if layout.size() > MAX_OBJ_SIZE {
+
+        // Check alignment requirement: slab object size must satisfy alignment
+        // Use max(size, align) to select size class (like Asterinas)
+        let required_size = layout.size().max(layout.align());
+
+        if required_size > MAX_OBJ_SIZE {
             return None;
         }
 
-        let size_class = match layout.size() {
+        let size_class = match required_size {
             0..=8 => SizeClass::Bytes8,
             9..=16 => SizeClass::Bytes16,
             17..=32 => SizeClass::Bytes32,
@@ -45,7 +50,11 @@ impl SizeClass {
             257..=512 => SizeClass::Bytes512,
             513..=1024 => SizeClass::Bytes1024,
             1025..=2048 => SizeClass::Bytes2048,
-            _ => return None,
+            _ => unreachable!(
+                "Invalid layout: size={}, align={}. This should have been caught by global_allocator check.",
+                layout.size(),
+                layout.align()
+            ),
         };
 
         Some(size_class)
@@ -500,14 +509,24 @@ impl<const PAGE_SIZE: usize> ByteAllocator for SlabByteAllocator<PAGE_SIZE> {
     }
 
     fn dealloc(&mut self, ptr: NonNull<u8>, layout: Layout) {
-        let size_class = SizeClass::from_layout(layout).unwrap_or(SizeClass::Bytes8);
+        let size_class = SizeClass::from_layout(layout).expect(
+            "Invalid layout for slab dealloc. Layout should have been validated by global_allocator.",
+        );
         let obj_addr = ptr.as_ptr() as usize;
 
         let cache = self.get_cache_mut(size_class);
-        if cache.dealloc_object::<PAGE_SIZE>(obj_addr).is_ok() {
-            self.allocated_bytes = self.allocated_bytes.saturating_sub(layout.size());
-            self.allocated_objects = self.allocated_objects.saturating_sub(1);
+
+        // This memory must be owned by slab allocator
+        // If dealloc_object fails (not found), it's a critical error
+        if cache.dealloc_object::<PAGE_SIZE>(obj_addr).is_err() {
+            panic!(
+                "Failed to dealloc address {:#x} from slab allocator. This address was not allocated by slab. Layout: size={}, align={}",
+                obj_addr, layout.size(), layout.align()
+            );
         }
+
+        self.allocated_bytes = self.allocated_bytes.saturating_sub(layout.size());
+        self.allocated_objects = self.allocated_objects.saturating_sub(1);
     }
 
     fn total_bytes(&self) -> usize {
