@@ -3,7 +3,6 @@
 //! Provides detailed statistics tracking and failure reporting.
 
 use super::buddy_block::ZoneInfo;
-use super::PAGE_SIZE;
 
 /// Maximum order supported
 pub const DEFAULT_MAX_ORDER: usize = 28;
@@ -56,6 +55,7 @@ impl MemoryStatsReporter {
     /// Print detailed allocation failure statistics
     /// This is a standalone function to keep allocation logic clean
     pub fn print_alloc_failure_stats(
+        page_size: usize,
         num_zones: usize,
         total_stats: &BuddyStats,
         zone_infos: &[ZoneInfo],
@@ -69,7 +69,7 @@ impl MemoryStatsReporter {
         error!(
             "Request: {} pages ({} KB, alignment:{})",
             request_pages,
-            (request_pages * PAGE_SIZE) / (1024),
+            (request_pages * page_size) / (1024),
             request_align
         );
 
@@ -78,17 +78,17 @@ impl MemoryStatsReporter {
         error!(
             "  Total pages: {} ({} KB)",
             total_stats.total_pages,
-            (total_stats.total_pages * PAGE_SIZE) / 1024 
+            (total_stats.total_pages * page_size) / 1024
         );
         error!(
             "  Free pages: {} ({} KB)",
             total_stats.free_pages,
-            (total_stats.free_pages * PAGE_SIZE) / (1024)
+            (total_stats.free_pages * page_size) / (1024)
         );
         error!(
             "  Used pages: {} ({} KB)",
             total_stats.used_pages,
-            (total_stats.used_pages * PAGE_SIZE) / (1024)
+            (total_stats.used_pages * page_size) / (1024)
         );
         error!("========================================");
 
@@ -108,7 +108,7 @@ impl MemoryStatsReporter {
             for order in (0..=DEFAULT_MAX_ORDER).rev() {
                 let count = zone_stats[i].free_pages_by_order[order];
                 if count > 0 {
-                    let block_size = (1 << order) * PAGE_SIZE;
+                    let block_size = (1 << order) * page_size;
                     let total_kb = (count * block_size) / (1024);
                     error!(
                         "    Order {}: {} blocks ({} KB each, {} KB total)",

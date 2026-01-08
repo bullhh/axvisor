@@ -18,5 +18,3 @@ pub use buddy_set::BuddySet;
 pub use global_node_pool::{GlobalNodePool, GLOBAL_TOTAL_NODES, ListNode};
 pub use pooled_list::PooledLinkedList;
 pub use stats::{BuddyStats, DEFAULT_MAX_ORDER};
-
-pub const PAGE_SIZE: usize = 0x1000;

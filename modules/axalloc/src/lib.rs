@@ -19,8 +19,8 @@ use axvisor_allocator::{AllocResult, PageAllocator};
 use kspin::SpinNoIrq;
 use strum::{IntoStaticStr, VariantArray};
 
+// Page size can be configured from here
 const PAGE_SIZE: usize = 0x1000;
-const MIN_HEAP_SIZE: usize = 0x8000; // 32 K
 
 mod page;
 pub use page::GlobalPage;
@@ -81,7 +81,7 @@ impl fmt::Debug for Usages {
 /// This is an adapter around the axvisor_allocator::GlobalAllocator that provides
 /// compatibility with the original axalloc API.
 pub struct GlobalAllocator {
-    inner: axvisor_allocator::GlobalAllocator,
+    inner: axvisor_allocator::GlobalAllocator<PAGE_SIZE>,
     usages: SpinNoIrq<Usages>,
 }
 
@@ -95,7 +95,7 @@ impl GlobalAllocator {
     /// Creates an empty [`GlobalAllocator`].
     pub const fn new() -> Self {
         Self {
-            inner: axvisor_allocator::GlobalAllocator::new(),
+            inner: axvisor_allocator::GlobalAllocator::<PAGE_SIZE>::new(),
             usages: SpinNoIrq::new(Usages::new()),
         }
     }

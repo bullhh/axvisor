@@ -13,11 +13,10 @@ use crate::{AllocError, AllocResult, BaseAllocator, PageAllocator};
 use log::{debug, error, info, warn};
 
 use super::{
-    buddy_block::{BuddyBlock, MAX_ZONES, ZoneInfo},
+    buddy_block::{MAX_ZONES, ZoneInfo},
     buddy_set::BuddySet,
     global_node_pool::GlobalNodePool,
     stats::{BuddyStats, MemoryStatsReporter},
-    PAGE_SIZE,
 };
 
 /// Buddy page allocator with multi-zone support and global node pool
@@ -25,17 +24,17 @@ use super::{
 /// The `global_node_pool` stores linked-list nodes (ListNode<BuddyBlock>),
 /// which are used to construct the free lists in each BuddySet.
 /// Memory pages themselves are tracked by BuddyBlock values, not by this pool.
-pub struct BuddyPageAllocator {
-    zones: [BuddySet; MAX_ZONES],
+pub struct BuddyPageAllocator<const PAGE_SIZE: usize = { crate::DEFAULT_PAGE_SIZE }> {
+    zones: [BuddySet<PAGE_SIZE>; MAX_ZONES],
     num_zones: usize,
     global_node_pool: GlobalNodePool,
     stats: BuddyStats,
 }
 
-impl BuddyPageAllocator {
+impl<const PAGE_SIZE: usize> BuddyPageAllocator<PAGE_SIZE> {
     pub const fn new() -> Self {
         Self {
-            zones: [const { BuddySet::empty() }; MAX_ZONES],
+            zones: [const { BuddySet::<PAGE_SIZE>::empty() }; MAX_ZONES],
             num_zones: 0,
             global_node_pool: GlobalNodePool::new(),
             stats: BuddyStats::new(),
@@ -198,6 +197,7 @@ impl BuddyPageAllocator {
         };
 
         MemoryStatsReporter::print_alloc_failure_stats(
+            PAGE_SIZE,
             self.num_zones,
             &self.stats,
             zone_infos_slice,
@@ -208,7 +208,7 @@ impl BuddyPageAllocator {
     }
 }
 
-impl crate::slab_byte_allocator::PageAllocatorForSlab for BuddyPageAllocator {
+impl<const PAGE_SIZE: usize> crate::slab_byte_allocator::PageAllocatorForSlab for BuddyPageAllocator<PAGE_SIZE> {
     fn alloc_pages(&mut self, num_pages: usize, alignment: usize) -> AllocResult<usize> {
         <Self as PageAllocator>::alloc_pages(self, num_pages, alignment)
     }
@@ -218,13 +218,13 @@ impl crate::slab_byte_allocator::PageAllocatorForSlab for BuddyPageAllocator {
     }
 }
 
-impl Default for BuddyPageAllocator {
+impl<const PAGE_SIZE: usize> Default for BuddyPageAllocator<PAGE_SIZE> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl BaseAllocator for BuddyPageAllocator {
+impl<const PAGE_SIZE: usize> BaseAllocator for BuddyPageAllocator<PAGE_SIZE> {
     fn init(&mut self, start: usize, size: usize) {
         self.bootstrap(start, size);
     }
@@ -236,7 +236,7 @@ impl BaseAllocator for BuddyPageAllocator {
     }
 }
 
-impl PageAllocator for BuddyPageAllocator {
+impl<const PAGE_SIZE: usize> PageAllocator for BuddyPageAllocator<PAGE_SIZE> {
     const PAGE_SIZE: usize = PAGE_SIZE;
 
     fn alloc_pages(&mut self, num_pages: usize, alignment: usize) -> AllocResult<usize> {

@@ -10,7 +10,6 @@ use log::info;
 
 use crate::{AllocError, AllocResult, BaseAllocator, ByteAllocator};
 
-const PAGE_SIZE: usize = 0x1000;
 const MAX_OBJ_SIZE: usize = 2048;
 
 /// Size classes for slab allocation
@@ -56,8 +55,8 @@ impl SizeClass {
         *self as usize
     }
 
-    pub fn objects_per_page(&self) -> usize {
-        PAGE_SIZE / self.size()
+    pub fn objects_per_page(&self, page_size: usize) -> usize {
+        page_size / self.size()
     }
 
     pub fn to_index(&self) -> usize {
@@ -100,8 +99,8 @@ pub struct SlabMeta {
 }
 
 impl SlabMeta {
-    pub fn new(size_class: SizeClass) -> Self {
-        let total_objects = size_class.objects_per_page() as u32;
+    pub fn new(size_class: SizeClass, page_size: usize) -> Self {
+        let total_objects = size_class.objects_per_page(page_size) as u32;
         let mut free_bitmap = [0u64; 8];
 
         // Mark all objects as free
@@ -178,22 +177,22 @@ pub struct SlabPage {
 }
 
 impl SlabPage {
-    pub fn new(addr: usize, size_class: SizeClass) -> Self {
+    pub fn new(addr: usize, size_class: SizeClass, page_size: usize) -> Self {
         Self {
             addr,
-            meta: SlabMeta::new(size_class),
+            meta: SlabMeta::new(size_class, page_size),
         }
     }
 
-    pub fn object_addr(&self, object_index: usize) -> usize {
+    pub fn object_addr(&self, object_index: usize, page_size: usize) -> usize {
         // Ensure object_index is within bounds
         debug_assert!(object_index < self.meta.total_objects as usize);
-        debug_assert!(object_index * self.meta.size_class.size() < PAGE_SIZE);
+        debug_assert!(object_index * self.meta.size_class.size() < page_size);
         self.addr + object_index * self.meta.size_class.size()
     }
 
-    pub fn object_index_from_addr(&self, obj_addr: usize) -> Option<usize> {
-        if obj_addr < self.addr || obj_addr >= self.addr + PAGE_SIZE {
+    pub fn object_index_from_addr(&self, obj_addr: usize, page_size: usize) -> Option<usize> {
+        if obj_addr < self.addr || obj_addr >= self.addr + page_size {
             return None;
         }
 
@@ -240,7 +239,7 @@ impl SlabCache {
         }
     }
 
-    pub fn alloc_object(
+    pub fn alloc_object<const PAGE_SIZE: usize>(
         &mut self,
         page_allocator: &mut dyn PageAllocatorForSlab,
     ) -> AllocResult<usize> {
@@ -248,7 +247,7 @@ impl SlabCache {
         for i in 0..self.partial_count {
             if let Some(ref mut page) = &mut self.partial_pages[i] {
                 if let Some(object_index) = page.meta.alloc_object() {
-                    let obj_addr = page.object_addr(object_index);
+                    let obj_addr = page.object_addr(object_index, PAGE_SIZE);
 
                     // Move page if it became full
                     if page.meta.is_full() {
@@ -264,7 +263,7 @@ impl SlabCache {
         for i in 0..self.free_count {
             if let Some(ref mut page) = &mut self.free_pages[i] {
                 if let Some(object_index) = page.meta.alloc_object() {
-                    let obj_addr = page.object_addr(object_index);
+                    let obj_addr = page.object_addr(object_index, PAGE_SIZE);
 
                     // Move page to partial
                     self.move_from_free_to_partial(i);
@@ -275,10 +274,10 @@ impl SlabCache {
 
         // Need to allocate a new page
         let new_page_addr = page_allocator.alloc_pages(1, PAGE_SIZE)?;
-        let mut new_page = SlabPage::new(new_page_addr, self.size_class);
+        let mut new_page = SlabPage::new(new_page_addr, self.size_class, PAGE_SIZE);
 
         if let Some(object_index) = new_page.meta.alloc_object() {
-            let obj_addr = new_page.object_addr(object_index);
+            let obj_addr = new_page.object_addr(object_index, PAGE_SIZE);
 
             // Add to partial pages
             if self.partial_count < MAX_SLAB_PAGES {
@@ -303,11 +302,11 @@ impl SlabCache {
         }
     }
 
-    pub fn dealloc_object(&mut self, obj_addr: usize) -> Result<(), ()> {
+    pub fn dealloc_object<const PAGE_SIZE: usize>(&mut self, obj_addr: usize) -> Result<(), ()> {
         // Try to find in partial pages
         for i in 0..self.partial_count {
             if let Some(ref mut page) = &mut self.partial_pages[i] {
-                if let Some(object_index) = page.object_index_from_addr(obj_addr) {
+                if let Some(object_index) = page.object_index_from_addr(obj_addr, PAGE_SIZE) {
                     page.meta.dealloc_object(object_index);
 
                     // Move to free if empty
@@ -323,7 +322,7 @@ impl SlabCache {
         // Try to find in full pages
         for i in 0..self.full_count {
             if let Some(ref mut page) = &mut self.full_pages[i] {
-                if let Some(object_index) = page.object_index_from_addr(obj_addr) {
+                if let Some(object_index) = page.object_index_from_addr(obj_addr, PAGE_SIZE) {
                     page.meta.dealloc_object(object_index);
 
                     // Move to partial
@@ -414,7 +413,7 @@ impl SlabCache {
 }
 
 /// Improved slab byte allocator
-pub struct SlabByteAllocator {
+pub struct SlabByteAllocator<const PAGE_SIZE: usize = { crate::DEFAULT_PAGE_SIZE }> {
     caches: [SlabCache; SizeClass::COUNT],
     page_allocator: Option<*mut dyn PageAllocatorForSlab>,
     total_bytes: usize,
@@ -424,10 +423,10 @@ pub struct SlabByteAllocator {
 }
 
 // SAFETY: SlabByteAllocator is used behind SpinNoIrq locks which provide synchronization
-unsafe impl Send for SlabByteAllocator {}
-unsafe impl Sync for SlabByteAllocator {}
+unsafe impl<const PAGE_SIZE: usize> Send for SlabByteAllocator<PAGE_SIZE> {}
+unsafe impl<const PAGE_SIZE: usize> Sync for SlabByteAllocator<PAGE_SIZE> {}
 
-impl SlabByteAllocator {
+impl<const PAGE_SIZE: usize> SlabByteAllocator<PAGE_SIZE> {
     pub const fn new() -> Self {
         Self {
             caches: [
@@ -462,27 +461,27 @@ impl SlabByteAllocator {
     }
 }
 
-impl Default for SlabByteAllocator {
+impl<const PAGE_SIZE: usize> Default for SlabByteAllocator<PAGE_SIZE> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl BaseAllocator for SlabByteAllocator {
-    fn init(&mut self, start: usize, size: usize) {
+impl<const PAGE_SIZE: usize> BaseAllocator for SlabByteAllocator<PAGE_SIZE> {
+    fn init(&mut self, _start: usize, size: usize) {
         self.total_bytes = size;
         self.allocated_bytes = 0;
         self.total_objects = 0;
         self.allocated_objects = 0;
     }
 
-    fn add_memory(&mut self, start: usize, size: usize) -> AllocResult {
+    fn add_memory(&mut self, _start: usize, size: usize) -> AllocResult {
         self.total_bytes += size;
         Ok(())
     }
 }
 
-impl ByteAllocator for SlabByteAllocator {
+impl<const PAGE_SIZE: usize> ByteAllocator for SlabByteAllocator<PAGE_SIZE> {
     fn alloc(&mut self, layout: Layout) -> AllocResult<NonNull<u8>> {
         let size_class = SizeClass::from_layout(layout).ok_or(AllocError::InvalidParam)?;
 
@@ -493,7 +492,7 @@ impl ByteAllocator for SlabByteAllocator {
         let page_allocator = unsafe { &mut *page_allocator_ptr };
         let cache = self.get_cache_mut(size_class);
 
-        let obj_addr = cache.alloc_object(page_allocator)?;
+        let obj_addr = cache.alloc_object::<PAGE_SIZE>(page_allocator)?;
         self.allocated_bytes += layout.size();
         self.allocated_objects += 1;
 
@@ -505,7 +504,7 @@ impl ByteAllocator for SlabByteAllocator {
         let obj_addr = ptr.as_ptr() as usize;
 
         let cache = self.get_cache_mut(size_class);
-        if cache.dealloc_object(obj_addr).is_ok() {
+        if cache.dealloc_object::<PAGE_SIZE>(obj_addr).is_ok() {
             self.allocated_bytes = self.allocated_bytes.saturating_sub(layout.size());
             self.allocated_objects = self.allocated_objects.saturating_sub(1);
         }
@@ -550,8 +549,8 @@ mod tests {
 
     #[test]
     fn test_slab_meta() {
-        let mut meta = SlabMeta::new(SizeClass::Bytes64);
-        assert_eq!(meta.total_objects, (PAGE_SIZE / 64) as u32);
+        let mut meta = SlabMeta::new(SizeClass::Bytes64, crate::DEFAULT_PAGE_SIZE);
+        assert_eq!(meta.total_objects, (crate::DEFAULT_PAGE_SIZE / 64) as u32);
         assert_eq!(meta.in_use, 0);
         assert!(!meta.is_full());
         assert!(meta.is_empty());

@@ -52,9 +52,6 @@ use log::{debug, info, warn};
 /// Maximum number of buddy blocks in a single contiguous allocation
 const MAX_PARTS_PER_ALLOC: usize = 8;
 
-/// Page size (4KB)
-const PAGE_SIZE: usize = 0x1000;
-
 /// Page allocator with overflow handling and contiguous block combination support.
 ///
 /// This allocator extends the buddy system to:
@@ -68,16 +65,16 @@ const PAGE_SIZE: usize = 0x1000;
 /// - **Purity**: Buddy system should maintain standard behavior (always allocates power-of-2)
 /// - **Flexibility**: Different page allocators can have different overflow strategies
 /// - **Maintainability**: Overflow logic is independent and easier to test at this layer
-pub struct CompositePageAllocator {
+pub struct CompositePageAllocator<const PAGE_SIZE: usize = { crate::DEFAULT_PAGE_SIZE }> {
     /// Underlying buddy allocator for standard allocations
-    buddy: BuddyPageAllocator,
+    buddy: BuddyPageAllocator<PAGE_SIZE>,
 }
 
-impl CompositePageAllocator {
+impl<const PAGE_SIZE: usize> CompositePageAllocator<PAGE_SIZE> {
     /// Create a new page allocator with contiguous block support
     pub const fn new() -> Self {
         Self {
-            buddy: BuddyPageAllocator::new(),
+            buddy: BuddyPageAllocator::<PAGE_SIZE>::new(),
         }
     }
 
@@ -319,7 +316,7 @@ impl CompositePageAllocator {
     }
 }
 
-impl PageAllocator for CompositePageAllocator {
+impl<const PAGE_SIZE: usize> PageAllocator for CompositePageAllocator<PAGE_SIZE> {
     const PAGE_SIZE: usize = PAGE_SIZE;
 
     fn alloc_pages(&mut self, num_pages: usize, alignment: usize) -> AllocResult<usize> {
@@ -411,14 +408,14 @@ impl PageAllocator for CompositePageAllocator {
     }
 }
 
-impl CompositePageAllocator {
+impl<const PAGE_SIZE: usize> CompositePageAllocator<PAGE_SIZE> {
     /// Get buddy allocator statistics
     pub fn get_buddy_stats(&self) -> crate::buddy::BuddyStats {
         self.buddy.get_stats()
     }
 }
 
-impl BaseAllocator for CompositePageAllocator {
+impl<const PAGE_SIZE: usize> BaseAllocator for CompositePageAllocator<PAGE_SIZE> {
     /// Initialize the allocator with a free memory region.
     fn init(&mut self, start: usize, size: usize) {
         self.buddy.init(start, size);
@@ -431,7 +428,7 @@ impl BaseAllocator for CompositePageAllocator {
 }
 
 // Implement PageAllocatorForSlab for CompositePageAllocator
-impl crate::slab_byte_allocator::PageAllocatorForSlab for CompositePageAllocator {
+impl<const PAGE_SIZE: usize> crate::slab_byte_allocator::PageAllocatorForSlab for CompositePageAllocator<PAGE_SIZE> {
     fn alloc_pages(&mut self, num_pages: usize, alignment: usize) -> AllocResult<usize> {
         <Self as PageAllocator>::alloc_pages(self, num_pages, alignment)
     }
@@ -441,7 +438,7 @@ impl crate::slab_byte_allocator::PageAllocatorForSlab for CompositePageAllocator
     }
 }
 
-impl Default for CompositePageAllocator {
+impl<const PAGE_SIZE: usize> Default for CompositePageAllocator<PAGE_SIZE> {
     fn default() -> Self {
         Self::new()
     }

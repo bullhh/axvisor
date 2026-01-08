@@ -16,6 +16,9 @@ extern crate axlog;
 use core::alloc::Layout;
 use core::ptr::NonNull;
 
+/// Default page size for backward compatibility
+pub const DEFAULT_PAGE_SIZE: usize = 0x1000;
+
 /// The error type used for allocation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AllocError {

@@ -27,8 +27,8 @@ impl BuddyBlock {
     /// The buddy is the other half of the parent block at the next higher order
     /// For a block at order k with address A, its buddy is at A ^ (2^k * PAGE_SIZE)
     #[allow(dead_code)]
-    pub fn buddy_addr(&self) -> usize {
-        self.addr ^ ((1 << self.order) * super::PAGE_SIZE)
+    pub fn buddy_addr<const PAGE_SIZE: usize>(&self) -> usize {
+        self.addr ^ ((1 << self.order) * PAGE_SIZE)
     }
 }
 

@@ -4,20 +4,19 @@
 //! pooled linked lists that draw nodes from a shared global pool.
 
 use crate::{AllocError, AllocResult};
-use log::{debug, error, info, trace, warn};
+use log::{error, warn};
 
 use super::{
     buddy_block::{BuddyBlock, ZoneInfo, DEFAULT_MAX_ORDER},
     global_node_pool::GlobalNodePool,
     pooled_list::PooledLinkedList,
-    PAGE_SIZE,
 };
 
 /// A buddy set implementation - represents a single zone
 ///
 /// Uses pooled linked lists with global node pool for efficient memory usage.
 /// All zones share the same global node pool.
-pub struct BuddySet {
+pub struct BuddySet<const PAGE_SIZE: usize = { crate::DEFAULT_PAGE_SIZE }> {
     pub(crate) base_addr: usize,
     pub(crate) end_addr: usize,
     total_pages: usize,
@@ -26,7 +25,7 @@ pub struct BuddySet {
     free_lists: [PooledLinkedList; DEFAULT_MAX_ORDER + 1],
 }
 
-impl BuddySet {
+impl<const PAGE_SIZE: usize> BuddySet<PAGE_SIZE> {
     /// Create a new buddy set for a zone (uninitialized, must call init())
     pub const fn new(base_addr: usize, size: usize, zone_id: usize) -> Self {
         Self {
