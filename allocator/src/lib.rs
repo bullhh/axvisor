@@ -11,8 +11,6 @@
 
 extern crate alloc;
 
-extern crate axlog;
-
 use core::alloc::Layout;
 use core::ptr::NonNull;
 

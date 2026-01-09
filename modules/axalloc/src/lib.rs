@@ -15,7 +15,7 @@ use core::{
     ptr::NonNull,
 };
 
-use axvisor_allocator::{AllocResult, PageAllocator};
+use buddy_slab_allocator::{AllocResult, PageAllocator};
 use kspin::SpinNoIrq;
 use strum::{IntoStaticStr, VariantArray};
 
@@ -81,7 +81,7 @@ impl fmt::Debug for Usages {
 /// This is an adapter around the axvisor_allocator::GlobalAllocator that provides
 /// compatibility with the original axalloc API.
 pub struct GlobalAllocator {
-    inner: axvisor_allocator::GlobalAllocator<PAGE_SIZE>,
+    inner: buddy_slab_allocator::GlobalAllocator<PAGE_SIZE>,
     usages: SpinNoIrq<Usages>,
 }
 
@@ -95,7 +95,7 @@ impl GlobalAllocator {
     /// Creates an empty [`GlobalAllocator`].
     pub const fn new() -> Self {
         Self {
-            inner: axvisor_allocator::GlobalAllocator::<PAGE_SIZE>::new(),
+            inner: buddy_slab_allocator::GlobalAllocator::<PAGE_SIZE>::new(),
             usages: SpinNoIrq::new(Usages::new()),
         }
     }

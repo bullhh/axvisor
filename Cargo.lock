@@ -319,7 +319,7 @@ version = "0.1.0"
 dependencies = [
  "axbacktrace",
  "axerrno 0.2.2",
- "axvisor-allocator",
+ "buddy-slab-allocator",
  "cfg-if",
  "kspin",
  "log",
@@ -1098,17 +1098,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "axvisor-allocator"
-version = "0.1.0"
-dependencies = [
- "axerrno 0.1.2",
- "axlog",
- "kspin",
- "log",
- "rand 0.8.5",
-]
-
-[[package]]
 name = "axvisor_api"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1308,6 +1297,14 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.111",
+]
+
+[[package]]
+name = "buddy-slab-allocator"
+version = "0.1.0"
+dependencies = [
+ "kspin",
+ "log",
 ]
 
 [[package]]
