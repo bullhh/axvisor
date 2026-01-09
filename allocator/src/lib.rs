@@ -143,8 +143,8 @@ pub use buddy::{BuddyPageAllocator, BuddyStats, DEFAULT_MAX_ORDER, MAX_ZONES};
 pub mod page_allocator;
 pub use page_allocator::CompositePageAllocator;
 
-pub mod slab_byte_allocator;
-pub use slab_byte_allocator::{PageAllocatorForSlab, SizeClass, SlabByteAllocator, SlabMeta};
+pub mod slab;
+pub use slab::slab_byte_allocator::{PageAllocatorForSlab, SizeClass, SlabByteAllocator};
 
 pub mod global_allocator;
 pub use global_allocator::{GlobalAllocator, UsageStats};

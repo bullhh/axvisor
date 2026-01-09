@@ -208,7 +208,7 @@ impl<const PAGE_SIZE: usize> BuddyPageAllocator<PAGE_SIZE> {
     }
 }
 
-impl<const PAGE_SIZE: usize> crate::slab_byte_allocator::PageAllocatorForSlab for BuddyPageAllocator<PAGE_SIZE> {
+impl<const PAGE_SIZE: usize> crate::slab::PageAllocatorForSlab for BuddyPageAllocator<PAGE_SIZE> {
     fn alloc_pages(&mut self, num_pages: usize, alignment: usize) -> AllocResult<usize> {
         <Self as PageAllocator>::alloc_pages(self, num_pages, alignment)
     }

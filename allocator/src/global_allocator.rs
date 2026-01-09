@@ -7,15 +7,14 @@ extern crate alloc;
 
 use crate::{AllocError, AllocResult, BaseAllocator, ByteAllocator, PageAllocator};
 use core::alloc::Layout;
-use core::error;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use super::buddy::BuddyStats;
 use super::page_allocator::CompositePageAllocator;
-use super::slab_byte_allocator::{PageAllocatorForSlab, SlabByteAllocator};
+use super::slab::{PageAllocatorForSlab, SlabByteAllocator};
 use kspin::SpinNoIrq;
-use log::{debug, error, info};
+use log::{error, info};
 
 const MIN_HEAP_SIZE: usize = 0x8000; // 32KB minimum heap
 
@@ -78,6 +77,10 @@ impl<const PAGE_SIZE: usize> GlobalAllocator<PAGE_SIZE> {
         // Initialize composite allocator first
         self.page_allocator.lock().init(start_vaddr, size);
         info!("global allocator: Composite page allocator initialized");
+
+        // Initialize slab allocator's global pool
+        self.slab_allocator.lock().init();
+        info!("global allocator: Slab node pool initialized");
 
         // Set up page allocator for slab
         {
