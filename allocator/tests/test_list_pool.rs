@@ -117,7 +117,11 @@ fn test_list_release_on_empty() {
     // Check stats
     let stats = buddy.get_pool_stats();
     assert!(stats.used_lists <= 64, "Should not exceed total lists");
-    assert_eq!(buddy.get_stats().free_pages, 1024, "All pages should be freed");
+    assert_eq!(
+        buddy.get_stats().free_pages,
+        1024,
+        "All pages should be freed"
+    );
 }
 
 /// Test stress: allocate and free many small blocks
@@ -256,7 +260,10 @@ fn test_list_reuse() {
     let stats2 = buddy.get_stats();
 
     // Stats should be similar (all pages should be freed)
-    assert_eq!(stats1.free_pages, stats2.free_pages, "Free pages should be same");
+    assert_eq!(
+        stats1.free_pages, stats2.free_pages,
+        "Free pages should be same"
+    );
     assert_eq!(stats1.free_pages, 512, "All pages should be freed");
 }
 
@@ -289,7 +296,11 @@ fn test_fragmentation_scenarios() {
     }
 
     // Check that all pages are freed
-    assert_eq!(buddy.get_stats().free_pages, 1024, "All pages should be freed");
+    assert_eq!(
+        buddy.get_stats().free_pages,
+        1024,
+        "All pages should be freed"
+    );
 }
 
 /// Test order transitions
@@ -323,7 +334,11 @@ fn test_order_transitions() {
     }
 
     // All pages should be freed
-    assert_eq!(buddy.get_stats().free_pages, 512, "All pages should be freed");
+    assert_eq!(
+        buddy.get_stats().free_pages,
+        512,
+        "All pages should be freed"
+    );
 }
 
 /// Test max order scenarios
@@ -350,7 +365,11 @@ fn test_max_order_scenarios() {
     }
 
     // All pages should be freed
-    assert_eq!(buddy.get_stats().free_pages, 4096, "All pages should be freed");
+    assert_eq!(
+        buddy.get_stats().free_pages,
+        4096,
+        "All pages should be freed"
+    );
 }
 
 /// Test that list pool doesn't leak blocks
@@ -415,7 +434,11 @@ fn test_extreme_fragmentation() {
     }
 
     // All pages should be freed
-    assert_eq!(buddy.get_stats().free_pages, 2048, "All pages should be freed");
+    assert_eq!(
+        buddy.get_stats().free_pages,
+        2048,
+        "All pages should be freed"
+    );
 
     // Verify we can still allocate
     let mut allocs2 = Vec::new();
@@ -424,5 +447,9 @@ fn test_extreme_fragmentation() {
             allocs2.push(addr);
         }
     }
-    assert_eq!(allocs2.len(), 200, "Should be able to allocate after freeing");
+    assert_eq!(
+        allocs2.len(),
+        200,
+        "Should be able to allocate after freeing"
+    );
 }

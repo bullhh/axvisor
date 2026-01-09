@@ -133,7 +133,11 @@ impl PooledLinkedList {
     /// Find a node by address (for buddy system)
     ///
     /// Returns (node_idx, prev_idx) where prev_idx is the node before it (or None if head)
-    pub fn find_by_addr(&self, pool: &GlobalNodePool, addr: usize) -> Option<(usize, Option<usize>)> {
+    pub fn find_by_addr(
+        &self,
+        pool: &GlobalNodePool,
+        addr: usize,
+    ) -> Option<(usize, Option<usize>)> {
         let mut prev_idx = None;
         let mut current_idx = self.head;
         let mut visited = 0;
@@ -267,8 +271,8 @@ impl<'a> Iterator for PooledListIter<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::global_node_pool::GLOBAL_TOTAL_NODES;
+    use super::*;
 
     #[test]
     fn test_pooled_list_basic() {
@@ -281,20 +285,44 @@ mod tests {
         assert_eq!(list.len(), 0);
         assert_eq!(pool.free_node_count(), GLOBAL_TOTAL_NODES);
 
-        list.insert_sorted(&mut pool, BuddyBlock { order: 0, addr: 0x1000 });
-        list.insert_sorted(&mut pool, BuddyBlock { order: 0, addr: 0x2000 });
-        list.insert_sorted(&mut pool, BuddyBlock { order: 0, addr: 0x3000 });
+        list.insert_sorted(
+            &mut pool,
+            BuddyBlock {
+                order: 0,
+                addr: 0x1000,
+            },
+        );
+        list.insert_sorted(
+            &mut pool,
+            BuddyBlock {
+                order: 0,
+                addr: 0x2000,
+            },
+        );
+        list.insert_sorted(
+            &mut pool,
+            BuddyBlock {
+                order: 0,
+                addr: 0x3000,
+            },
+        );
 
         assert_eq!(list.len(), 3);
         assert_eq!(pool.free_node_count(), GLOBAL_TOTAL_NODES - 3);
 
         assert_eq!(
             list.pop_front(&mut pool),
-            Some(BuddyBlock { order: 0, addr: 0x1000 })
+            Some(BuddyBlock {
+                order: 0,
+                addr: 0x1000
+            })
         );
         assert_eq!(
             list.pop_front(&mut pool),
-            Some(BuddyBlock { order: 0, addr: 0x2000 })
+            Some(BuddyBlock {
+                order: 0,
+                addr: 0x2000
+            })
         );
         assert_eq!(list.len(), 1);
         assert_eq!(pool.free_node_count(), GLOBAL_TOTAL_NODES - 1);
@@ -312,10 +340,34 @@ mod tests {
 
         let mut list: PooledLinkedList = PooledLinkedList::new();
 
-        list.insert_sorted(&mut pool, BuddyBlock { order: 0, addr: 0x5000 });
-        list.insert_sorted(&mut pool, BuddyBlock { order: 0, addr: 0x3000 });
-        list.insert_sorted(&mut pool, BuddyBlock { order: 0, addr: 0x7000 });
-        list.insert_sorted(&mut pool, BuddyBlock { order: 0, addr: 0x1000 });
+        list.insert_sorted(
+            &mut pool,
+            BuddyBlock {
+                order: 0,
+                addr: 0x5000,
+            },
+        );
+        list.insert_sorted(
+            &mut pool,
+            BuddyBlock {
+                order: 0,
+                addr: 0x3000,
+            },
+        );
+        list.insert_sorted(
+            &mut pool,
+            BuddyBlock {
+                order: 0,
+                addr: 0x7000,
+            },
+        );
+        list.insert_sorted(
+            &mut pool,
+            BuddyBlock {
+                order: 0,
+                addr: 0x1000,
+            },
+        );
 
         let items: alloc::vec::Vec<_> = list.iter(&pool).collect();
         assert_eq!(items.len(), 4);
@@ -332,9 +384,27 @@ mod tests {
 
         let mut list: PooledLinkedList = PooledLinkedList::new();
 
-        list.insert_sorted(&mut pool, BuddyBlock { order: 0, addr: 0x1000 });
-        list.insert_sorted(&mut pool, BuddyBlock { order: 0, addr: 0x2000 });
-        list.insert_sorted(&mut pool, BuddyBlock { order: 0, addr: 0x3000 });
+        list.insert_sorted(
+            &mut pool,
+            BuddyBlock {
+                order: 0,
+                addr: 0x1000,
+            },
+        );
+        list.insert_sorted(
+            &mut pool,
+            BuddyBlock {
+                order: 0,
+                addr: 0x2000,
+            },
+        );
+        list.insert_sorted(
+            &mut pool,
+            BuddyBlock {
+                order: 0,
+                addr: 0x3000,
+            },
+        );
 
         let (node_idx, _) = list.find_by_addr(&pool, 0x2000).unwrap();
         assert!(list.remove(&mut pool, node_idx));

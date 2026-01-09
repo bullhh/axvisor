@@ -6,11 +6,13 @@
 use core::alloc::Layout;
 use core::ptr::NonNull;
 
-use crate::{AllocError, AllocResult, BaseAllocator, ByteAllocator};
+use log::warn;
+
+use crate::{AllocError, AllocResult, ByteAllocator};
 
 // Re-export public types from sibling modules
-pub use super::slab_node::SlabNode;
 pub use super::slab_cache::SlabCache;
+pub use super::slab_node::SlabNode;
 pub use super::slab_node_pool::GlobalSlabNodePool;
 pub use super::slab_pooled_list::SlabPooledLinkedList;
 
@@ -38,6 +40,11 @@ impl SizeClass {
         let required_size = layout.size().max(layout.align());
 
         if required_size > Self::MAX_OBJ_SIZE {
+            warn!(
+                "Invalid layout: size={}, align={}",
+                layout.size(),
+                layout.align()
+            );
             return None;
         }
 
@@ -149,19 +156,6 @@ impl<const PAGE_SIZE: usize> Default for SlabByteAllocator<PAGE_SIZE> {
     }
 }
 
-impl<const PAGE_SIZE: usize> BaseAllocator for SlabByteAllocator<PAGE_SIZE> {
-    fn init(&mut self, _start: usize, size: usize) {
-        self.global_pool.init_free_list();
-        self.total_bytes = size;
-        self.allocated_bytes = 0;
-    }
-
-    fn add_memory(&mut self, _start: usize, size: usize) -> AllocResult {
-        self.total_bytes += size;
-        Ok(())
-    }
-}
-
 impl<const PAGE_SIZE: usize> ByteAllocator for SlabByteAllocator<PAGE_SIZE> {
     fn alloc(&mut self, layout: Layout) -> AllocResult<NonNull<u8>> {
         let size_class = SizeClass::from_layout(layout).ok_or(AllocError::InvalidParam)?;
@@ -173,8 +167,10 @@ impl<const PAGE_SIZE: usize> ByteAllocator for SlabByteAllocator<PAGE_SIZE> {
         let page_allocator = unsafe { &mut *page_allocator_ptr };
         let cache = &mut self.caches[size_class.to_index()];
 
-        let obj_addr = cache.alloc_object(&mut self.global_pool, page_allocator, PAGE_SIZE)?;
-        self.allocated_bytes += layout.size();
+        let (obj_addr, page_bytes) =
+            cache.alloc_object(&mut self.global_pool, page_allocator, PAGE_SIZE)?;
+        self.allocated_bytes += layout.size().max(layout.align());
+        self.total_bytes += page_bytes;
 
         Ok(unsafe { NonNull::new_unchecked(obj_addr as *mut u8) })
     }
@@ -190,8 +186,12 @@ impl<const PAGE_SIZE: usize> ByteAllocator for SlabByteAllocator<PAGE_SIZE> {
         let page_allocator = unsafe { &mut *page_allocator_ptr };
         let cache = &mut self.caches[size_class.to_index()];
 
-        cache.dealloc_object(&mut self.global_pool, obj_addr, page_allocator, PAGE_SIZE);
-        self.allocated_bytes = self.allocated_bytes.saturating_sub(layout.size());
+        let freed_bytes =
+            cache.dealloc_object(&mut self.global_pool, obj_addr, page_allocator, PAGE_SIZE);
+        self.allocated_bytes = self
+            .allocated_bytes
+            .saturating_sub(layout.size().max(layout.align()));
+        self.total_bytes = self.total_bytes.saturating_sub(freed_bytes);
     }
 
     fn total_bytes(&self) -> usize {

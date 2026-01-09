@@ -84,7 +84,8 @@ impl<const PAGE_SIZE: usize> GlobalAllocator<PAGE_SIZE> {
 
         // Set up page allocator for slab
         {
-            let page_alloc_ptr = &mut *self.page_allocator.lock() as *mut CompositePageAllocator<PAGE_SIZE>;
+            let page_alloc_ptr =
+                &mut *self.page_allocator.lock() as *mut CompositePageAllocator<PAGE_SIZE>;
             self.slab_allocator
                 .lock()
                 .set_page_allocator(page_alloc_ptr as *mut dyn PageAllocatorForSlab);
@@ -126,7 +127,6 @@ impl<const PAGE_SIZE: usize> GlobalAllocator<PAGE_SIZE> {
             error!("global allocator: Allocator not initialized");
             return Err(AllocError::NoMemory);
         }
-
 
         if layout.size() <= 2048 && layout.align() <= 2048 {
             // Try slab allocator first
@@ -353,7 +353,6 @@ unsafe impl<const PAGE_SIZE: usize> core::alloc::GlobalAlloc for GlobalAllocator
             return core::ptr::null_mut();
         }
 
-
         if layout.size() <= 2048 && layout.align() <= 2048 {
             match self.slab_allocator.lock().alloc(layout) {
                 Ok(ptr) => {
@@ -368,7 +367,7 @@ unsafe impl<const PAGE_SIZE: usize> core::alloc::GlobalAlloc for GlobalAllocator
                         "global allocator: Slab allocator failed for layout {:?}, error: {:?}, falling back to page allocator",
                         layout, e
                     );
-                    return  core::ptr::null_mut();
+                    return core::ptr::null_mut();
                 }
             }
         }

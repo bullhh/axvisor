@@ -4,8 +4,8 @@
 //! of slab nodes for a specific size class.
 
 use super::slab_byte_allocator::{PageAllocatorForSlab, SizeClass};
-use super::slab_node_pool::GlobalSlabNodePool;
 use super::slab_node::SlabNode;
+use super::slab_node_pool::GlobalSlabNodePool;
 use super::slab_pooled_list::SlabPooledLinkedList;
 use crate::{AllocError, AllocResult};
 
@@ -28,12 +28,13 @@ impl SlabCache {
     }
 
     /// Allocate an object from this cache
+    /// Returns (object_addr, bytes_allocated_from_page_allocator)
     pub fn alloc_object(
         &mut self,
         pool: &mut GlobalSlabNodePool,
         page_allocator: &mut dyn PageAllocatorForSlab,
         page_size: usize,
-    ) -> AllocResult<usize> {
+    ) -> AllocResult<(usize, usize)> {
         // 1. Try to allocate from partial list
         if let Some(node_idx) = self.partial.back() {
             let idx_copy = node_idx;
@@ -47,7 +48,7 @@ impl SlabCache {
                         self.full.push_back(pool, idx_copy);
                     }
 
-                    return Ok(obj_addr);
+                    return Ok((obj_addr, 0));
                 }
             }
         }
@@ -61,25 +62,27 @@ impl SlabCache {
                     self.partial.push_back(pool, idx_copy);
 
                     // Pre-allocate one empty node for future use
-                    self.preallocate_empty_node(pool, page_allocator, page_size);
+                    let prealloc_bytes =
+                        self.preallocate_empty_node(pool, page_allocator, page_size);
 
-                    return Ok(obj_addr);
+                    return Ok((obj_addr, prealloc_bytes));
                 }
             }
         }
 
         // 3. Allocate a new node from page allocator
-        let new_node_addr = self.allocate_new_node(pool, page_allocator, page_size)?;
-        Ok(new_node_addr)
+        let (obj_addr, bytes) = self.allocate_new_node(pool, page_allocator, page_size)?;
+        Ok((obj_addr, bytes))
     }
 
     /// Allocate a new slab node from page allocator
+    /// Returns (object_addr, bytes_allocated_from_page_allocator)
     fn allocate_new_node(
         &mut self,
         pool: &mut GlobalSlabNodePool,
         page_allocator: &mut dyn PageAllocatorForSlab,
         page_size: usize,
-    ) -> AllocResult<usize> {
+    ) -> AllocResult<(usize, usize)> {
         let object_size = self.size_class.size();
         let bytes_needed = 512 * object_size;
         let page_count = (bytes_needed + page_size - 1) / page_size;
@@ -95,9 +98,10 @@ impl SlabCache {
                     self.partial.push_back(pool, node_idx);
 
                     // Pre-allocate one empty node for future use
-                    self.preallocate_empty_node(pool, page_allocator, page_size);
+                    let prealloc_bytes =
+                        self.preallocate_empty_node(pool, page_allocator, page_size);
 
-                    return Ok(obj_addr);
+                    return Ok((obj_addr, page_count * page_size + prealloc_bytes));
                 }
             }
         }
@@ -108,14 +112,15 @@ impl SlabCache {
     }
 
     /// Pre-allocate an empty node for future allocations
+    /// Returns bytes allocated from page allocator (0 if already has empty nodes)
     fn preallocate_empty_node(
         &mut self,
         pool: &mut GlobalSlabNodePool,
         page_allocator: &mut dyn PageAllocatorForSlab,
         page_size: usize,
-    ) {
+    ) -> usize {
         if self.empty.len() > 0 {
-            return; // Already have empty nodes
+            return 0; // Already have empty nodes
         }
 
         let object_size = self.size_class.size();
@@ -126,20 +131,24 @@ impl SlabCache {
             let new_node = SlabNode::new(start_addr, self.size_class);
             if let Some(node_idx) = pool.alloc_node(new_node) {
                 self.empty.push_back(pool, node_idx);
+                return page_count * page_size;
             } else {
                 page_allocator.dealloc_pages(start_addr, page_count);
             }
         }
+
+        0
     }
 
     /// Deallocate an object
+    /// Returns bytes freed from page allocator (if node was deallocated)
     pub fn dealloc_object(
         &mut self,
         pool: &mut GlobalSlabNodePool,
         obj_addr: usize,
         page_allocator: &mut dyn PageAllocatorForSlab,
         page_size: usize,
-    ) {
+    ) -> usize {
         // First pass: search in partial list
         let mut found_idx = None;
         let mut is_in_partial = false;
@@ -173,7 +182,8 @@ impl SlabCache {
         // Now deallocate with mutable access
         if let Some(idx) = found_idx {
             // First borrow: get node info and deallocate
-            let (node_addr, page_count, should_dealloc_node) = if let Some(node) = pool.get_mut(idx) {
+            let (node_addr, page_count, should_dealloc_node) = if let Some(node) = pool.get_mut(idx)
+            {
                 if let Some(obj_idx) = node.object_index_from_addr(obj_addr) {
                     node.dealloc_object(obj_idx);
                     let is_empty = node.is_empty();
@@ -201,8 +211,10 @@ impl SlabCache {
                 if self.empty.len() >= 2 {
                     page_allocator.dealloc_pages(node_addr, page_count);
                     pool.free_node(idx);
+                    return page_count * page_size;
                 } else {
                     self.empty.push_back(pool, idx);
+                    return 0;
                 }
             } else if !is_in_partial {
                 // Move from full to partial
@@ -210,7 +222,7 @@ impl SlabCache {
                 self.partial.push_back(pool, idx);
             }
 
-            return;
+            return 0;
         }
 
         panic!(
@@ -250,7 +262,8 @@ mod tests {
         }
 
         fn dealloc_pages(&mut self, pos: usize, num_pages: usize) {
-            self.allocated.retain(|&(addr, count)| !(addr == pos && count == num_pages));
+            self.allocated
+                .retain(|&(addr, count)| !(addr == pos && count == num_pages));
         }
     }
 
@@ -263,7 +276,7 @@ mod tests {
         let mut page_allocator = MockPageAllocator::new();
 
         // Allocate an object
-        let obj_addr = cache
+        let (obj_addr, _) = cache
             .alloc_object(&mut pool, &mut page_allocator, 4096)
             .unwrap();
 
@@ -284,7 +297,7 @@ mod tests {
         // Allocate multiple objects
         let mut addrs = alloc::vec::Vec::new();
         for _ in 0..10 {
-            let addr = cache
+            let (addr, _) = cache
                 .alloc_object(&mut pool, &mut page_allocator, 4096)
                 .unwrap();
             addrs.push(addr);
@@ -308,17 +321,17 @@ mod tests {
         let mut page_allocator = MockPageAllocator::new();
 
         // Allocate and deallocate to create empty nodes
-        let addr1 = cache
+        let (addr1, _) = cache
             .alloc_object(&mut pool, &mut page_allocator, 4096)
             .unwrap();
         cache.dealloc_object(&mut pool, addr1, &mut page_allocator, 4096);
 
-        let addr2 = cache
+        let (addr2, _) = cache
             .alloc_object(&mut pool, &mut page_allocator, 4096)
             .unwrap();
         cache.dealloc_object(&mut pool, addr2, &mut page_allocator, 4096);
 
-        let addr3 = cache
+        let (addr3, _) = cache
             .alloc_object(&mut pool, &mut page_allocator, 4096)
             .unwrap();
         cache.dealloc_object(&mut pool, addr3, &mut page_allocator, 4096);

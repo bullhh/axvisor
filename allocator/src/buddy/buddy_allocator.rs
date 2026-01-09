@@ -13,7 +13,7 @@ use crate::{AllocError, AllocResult, BaseAllocator, PageAllocator};
 use log::{debug, error, info, warn};
 
 use super::{
-    buddy_block::{MAX_ZONES, ZoneInfo},
+    buddy_block::{ZoneInfo, MAX_ZONES},
     buddy_set::BuddySet,
     global_node_pool::GlobalNodePool,
     stats::{BuddyStats, MemoryStatsReporter},
@@ -184,16 +184,10 @@ impl<const PAGE_SIZE: usize> BuddyPageAllocator<PAGE_SIZE> {
 
         // Create slices from the initialized elements
         let zone_infos_slice: &[ZoneInfo] = unsafe {
-            core::slice::from_raw_parts(
-                zone_infos.as_ptr() as *const ZoneInfo,
-                self.num_zones,
-            )
+            core::slice::from_raw_parts(zone_infos.as_ptr() as *const ZoneInfo, self.num_zones)
         };
         let zone_stats_slice: &[BuddyStats] = unsafe {
-            core::slice::from_raw_parts(
-                zone_stats.as_ptr() as *const BuddyStats,
-                self.num_zones,
-            )
+            core::slice::from_raw_parts(zone_stats.as_ptr() as *const BuddyStats, self.num_zones)
         };
 
         MemoryStatsReporter::print_alloc_failure_stats(

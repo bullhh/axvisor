@@ -151,8 +151,8 @@ mod tests {
     use super::*;
 
     // Re-import for tests
-    use super::super::slab_node::SlabNode;
     use super::super::slab_byte_allocator::SizeClass;
+    use super::super::slab_node::SlabNode;
 
     #[test]
     fn test_free_list_initialization() {

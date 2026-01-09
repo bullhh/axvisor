@@ -3,14 +3,16 @@
 //! This module defines the SlabNode structure which manages exactly 512 objects
 //! using a fixed bitmap.
 
+use log::{error, warn};
+
 pub use super::slab_byte_allocator::SizeClass;
 
 /// Slab node managing exactly 512 objects
 #[derive(Debug, Clone, Copy)]
 pub struct SlabNode {
-    pub addr: usize,               // Starting physical address
-    pub size_class: SizeClass,     // Size class
-    pub free_bitmap: [u64; 8],    // Bitmap (512 bits)
+    pub addr: usize,           // Starting physical address
+    pub size_class: SizeClass, // Size class
+    pub free_bitmap: [u64; 8], // Bitmap (512 bits)
 }
 
 impl SlabNode {
@@ -21,7 +23,7 @@ impl SlabNode {
         Self {
             addr,
             size_class,
-            free_bitmap: [u64::MAX; 8],  // All free
+            free_bitmap: [u64::MAX; 8], // All free
         }
     }
 
@@ -85,6 +87,7 @@ impl SlabNode {
 
         let offset = obj_addr - self.addr;
         if offset % self.size_class.size() != 0 {
+            error!("Invalid object address: {:x}", obj_addr);
             return None;
         }
 
@@ -136,33 +139,27 @@ mod tests {
     fn test_object_index_from_addr() {
         let node = SlabNode::new(0x1000, SizeClass::Bytes64);
 
-        assert_eq!(
-            node.object_index_from_addr(0x1000),
-            Some(0)
-        );
-        assert_eq!(
-            node.object_index_from_addr(0x1000 + 64),
-            Some(1)
-        );
+        assert_eq!(node.object_index_from_addr(0x1000), Some(0));
+        assert_eq!(node.object_index_from_addr(0x1000 + 64), Some(1));
         assert_eq!(
             node.object_index_from_addr(0x1000 + 63),
-            None  // Not aligned
+            None // Not aligned
         );
         assert_eq!(
             node.object_index_from_addr(0x1000 + 512 * 64),
-            None  // Out of range
+            None // Out of range
         );
     }
 
     #[test]
     fn test_page_count() {
         let node8 = SlabNode::new(0, SizeClass::Bytes8);
-        assert_eq!(node8.page_count(4096), 1);  // 512 * 8 = 4096
+        assert_eq!(node8.page_count(4096), 1); // 512 * 8 = 4096
 
         let node64 = SlabNode::new(0, SizeClass::Bytes64);
-        assert_eq!(node64.page_count(4096), 8);  // 512 * 64 = 32768
+        assert_eq!(node64.page_count(4096), 8); // 512 * 64 = 32768
 
         let node2048 = SlabNode::new(0, SizeClass::Bytes2048);
-        assert_eq!(node2048.page_count(4096), 256);  // 512 * 2048 = 1,048,576
+        assert_eq!(node2048.page_count(4096), 256); // 512 * 2048 = 1,048,576
     }
 }

@@ -145,7 +145,7 @@ mod tests {
     use super::*;
 
     // Re-import for tests
-    use super::super::slab_node::{SlabNode, SizeClass};
+    use super::super::slab_node::{SizeClass, SlabNode};
 
     #[test]
     fn test_empty_list() {
@@ -246,7 +246,10 @@ mod tests {
 
         let mut collected = alloc::vec::Vec::new();
         list.for_each_index(&pool, |idx| collected.push(idx));
-        assert_eq!(collected, alloc::vec![indices[0], indices[1], indices[3], indices[4]]);
+        assert_eq!(
+            collected,
+            alloc::vec![indices[0], indices[1], indices[3], indices[4]]
+        );
     }
 
     #[test]

@@ -85,7 +85,10 @@ impl<const PAGE_SIZE: usize> BuddySet<PAGE_SIZE> {
         node_idx: usize,
     ) -> bool {
         if order > DEFAULT_MAX_ORDER {
-            error!("zone {}: Order {} exceeds maximum order {}", self.zone_id, order, DEFAULT_MAX_ORDER);
+            error!(
+                "zone {}: Order {} exceeds maximum order {}",
+                self.zone_id, order, DEFAULT_MAX_ORDER
+            );
             return false;
         }
         self.free_lists[order].remove(pool, node_idx)
@@ -153,7 +156,11 @@ impl<const PAGE_SIZE: usize> BuddySet<PAGE_SIZE> {
         };
 
         if required_order > self.max_order() {
-            error!("required order: {}, max order: {}", required_order, self.max_order());
+            error!(
+                "required order: {}, max order: {}",
+                required_order,
+                self.max_order()
+            );
             return Err(AllocError::NoMemory);
         }
 
@@ -298,7 +305,6 @@ impl<const PAGE_SIZE: usize> BuddySet<PAGE_SIZE> {
 
                 // Move to next order
                 order += 1;
-
             } else {
                 // No buddy found, cannot merge further
                 break;
@@ -335,8 +341,6 @@ impl<const PAGE_SIZE: usize> BuddySet<PAGE_SIZE> {
         stats.used_pages = stats.total_pages.saturating_sub(stats.free_pages);
         stats
     }
-
-
 
     /// Get free blocks of a specific order as an iterator
     pub fn get_free_blocks_by_order<'a>(
@@ -404,7 +408,10 @@ impl<const PAGE_SIZE: usize> BuddySet<PAGE_SIZE> {
         if base + size > self.end_addr {
             error!(
                 "zone {}: Allocation range [{:#x}, {:#x}) exceeds zone end {:#x}",
-                self.zone_id, base, base + size, self.end_addr
+                self.zone_id,
+                base,
+                base + size,
+                self.end_addr
             );
             return Err(AllocError::InvalidParam);
         }
@@ -429,7 +436,10 @@ impl<const PAGE_SIZE: usize> BuddySet<PAGE_SIZE> {
         if aligned_pfn != pfn {
             error!(
                 "zone {}: Base address {:#x} (PFN {}) is not aligned for {} pages",
-                self.zone_id, base, pfn, 1 << required_order
+                self.zone_id,
+                base,
+                pfn,
+                1 << required_order
             );
             return Err(AllocError::InvalidParam);
         }
@@ -499,12 +509,16 @@ impl<const PAGE_SIZE: usize> BuddySet<PAGE_SIZE> {
                 assert!(
                     current_block.addr == base,
                     "zone {}: Final block address {:#x} doesn't match requested {:#x}",
-                    self.zone_id, current_block.addr, base
+                    self.zone_id,
+                    current_block.addr,
+                    base
                 );
                 assert!(
                     current_block.order == required_order,
                     "zone {}: Final block order {} doesn't match required {}",
-                    self.zone_id, current_block.order, required_order
+                    self.zone_id,
+                    current_block.order,
+                    required_order
                 );
 
                 return Ok(base);

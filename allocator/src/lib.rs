@@ -45,7 +45,7 @@ pub trait BaseAllocator {
 }
 
 /// Byte-granularity allocator.
-pub trait ByteAllocator: BaseAllocator {
+pub trait ByteAllocator {
     /// Allocate memory with the given size (in bytes) and alignment.
     fn alloc(&mut self, layout: Layout) -> AllocResult<NonNull<u8>>;
 

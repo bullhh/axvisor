@@ -78,9 +78,7 @@ impl GlobalNodePool {
         }
 
         // Get next free node
-        let next_free = self.nodes[node_idx]
-            .as_ref()
-            .and_then(|n| n.next);
+        let next_free = self.nodes[node_idx].as_ref().and_then(|n| n.next);
 
         // Clear the node's next pointer
         if let Some(node) = self.nodes[node_idx].as_mut() {
@@ -240,7 +238,10 @@ mod tests {
 
         // Get mutable reference and set data
         if let Some(node) = pool.get_node_mut(idx) {
-            node.data = BuddyBlock { order: 0, addr: 0x1000 };
+            node.data = BuddyBlock {
+                order: 0,
+                addr: 0x1000,
+            };
         }
 
         // Get reference and read data

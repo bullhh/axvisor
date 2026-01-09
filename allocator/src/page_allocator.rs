@@ -167,7 +167,6 @@ impl<const PAGE_SIZE: usize> CompositePageAllocator<PAGE_SIZE> {
 
         // If we found enough contiguous pages, allocate them
         if remaining_pages == 0 {
-
             let mut parts = [(0usize, 0u32); MAX_PARTS_PER_ALLOC];
 
             // Allocate all contiguous blocks
@@ -264,7 +263,10 @@ impl<const PAGE_SIZE: usize> CompositePageAllocator<PAGE_SIZE> {
             if pfn & (chunk_pages - 1) != 0 {
                 warn!(
                     "  Address {:#x} not aligned for {} pages, pfn={}, mask={}",
-                    current_addr, chunk_pages, pfn, chunk_pages - 1
+                    current_addr,
+                    chunk_pages,
+                    pfn,
+                    chunk_pages - 1
                 );
                 return Err(AllocError::InvalidParam);
             }
@@ -428,7 +430,9 @@ impl<const PAGE_SIZE: usize> BaseAllocator for CompositePageAllocator<PAGE_SIZE>
 }
 
 // Implement PageAllocatorForSlab for CompositePageAllocator
-impl<const PAGE_SIZE: usize> crate::slab::PageAllocatorForSlab for CompositePageAllocator<PAGE_SIZE> {
+impl<const PAGE_SIZE: usize> crate::slab::PageAllocatorForSlab
+    for CompositePageAllocator<PAGE_SIZE>
+{
     fn alloc_pages(&mut self, num_pages: usize, alignment: usize) -> AllocResult<usize> {
         <Self as PageAllocator>::alloc_pages(self, num_pages, alignment)
     }
@@ -443,4 +447,3 @@ impl<const PAGE_SIZE: usize> Default for CompositePageAllocator<PAGE_SIZE> {
         Self::new()
     }
 }
-
