@@ -14,6 +14,32 @@ extern crate alloc;
 use core::alloc::Layout;
 use core::ptr::NonNull;
 
+// Logging support - conditionally import log crate
+#[cfg(feature = "log")]
+extern crate log;
+
+// Stub macros when log is disabled - these become no-ops
+#[cfg(not(feature = "log"))]
+macro_rules! error {
+    ($($arg:tt)*) => {};
+}
+#[cfg(not(feature = "log"))]
+macro_rules! warn {
+    ($($arg:tt)*) => {};
+}
+#[cfg(not(feature = "log"))]
+macro_rules! info {
+    ($($arg:tt)*) => {};
+}
+#[cfg(not(feature = "log"))]
+macro_rules! debug {
+    ($($arg:tt)*) => {};
+}
+#[cfg(not(feature = "log"))]
+macro_rules! trace {
+    ($($arg:tt)*) => {};
+}
+
 /// Default page size for backward compatibility
 pub const DEFAULT_PAGE_SIZE: usize = 0x1000;
 

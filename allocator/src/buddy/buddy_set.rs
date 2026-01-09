@@ -4,6 +4,8 @@
 //! pooled linked lists that draw nodes from a shared global pool.
 
 use crate::{AllocError, AllocResult};
+
+#[cfg(feature = "log")]
 use log::{error, warn};
 
 use super::{

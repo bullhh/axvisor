@@ -63,65 +63,67 @@ impl MemoryStatsReporter {
         request_pages: usize,
         request_align: usize,
     ) {
-        use log::error;
-
-        error!("========================================");
-        error!(
-            "Request: {} pages ({} KB, alignment:{})",
-            request_pages,
-            (request_pages * page_size) / (1024),
-            request_align
-        );
-
-        error!("Overall Memory State:");
-        error!("  Total zones: {}", num_zones);
-        error!(
-            "  Total pages: {} ({} KB)",
-            total_stats.total_pages,
-            (total_stats.total_pages * page_size) / 1024
-        );
-        error!(
-            "  Free pages: {} ({} KB)",
-            total_stats.free_pages,
-            (total_stats.free_pages * page_size) / (1024)
-        );
-        error!(
-            "  Used pages: {} ({} KB)",
-            total_stats.used_pages,
-            (total_stats.used_pages * page_size) / (1024)
-        );
-        error!("========================================");
-
-        for i in 0..num_zones {
-            error!("Zone {}:", i);
+        #[cfg(feature = "log")]
+        {
+            use log::error;
+            error!("========================================");
             error!(
-                "  Range: [{:#x}, {:#x})",
-                zone_infos[i].start_addr, zone_infos[i].end_addr
+                "Request: {} pages ({} KB, alignment:{})",
+                request_pages,
+                (request_pages * page_size) / (1024),
+                request_align
             );
-            error!("  Total pages: {}", zone_infos[i].total_pages);
-            error!(
-                "  Free pages: {} / {}",
-                zone_stats[i].free_pages, zone_infos[i].total_pages
-            );
-            error!("  Free blocks by order:");
 
-            for order in (0..=DEFAULT_MAX_ORDER).rev() {
-                let count = zone_stats[i].free_pages_by_order[order];
-                if count > 0 {
-                    let block_size = (1 << order) * page_size;
-                    let total_kb = (count * block_size) / (1024);
-                    error!(
-                        "    Order {}: {} blocks ({} KB each, {} KB total)",
-                        order,
-                        count,
-                        block_size / (1024),
-                        total_kb
-                    );
+            error!("Overall Memory State:");
+            error!("  Total zones: {}", num_zones);
+            error!(
+                "  Total pages: {} ({} KB)",
+                total_stats.total_pages,
+                (total_stats.total_pages * page_size) / 1024
+            );
+            error!(
+                "  Free pages: {} ({} KB)",
+                total_stats.free_pages,
+                (total_stats.free_pages * page_size) / (1024)
+            );
+            error!(
+                "  Used pages: {} ({} KB)",
+                total_stats.used_pages,
+                (total_stats.used_pages * page_size) / (1024)
+            );
+            error!("========================================");
+
+            for i in 0..num_zones {
+                error!("Zone {}:", i);
+                error!(
+                    "  Range: [{:#x}, {:#x})",
+                    zone_infos[i].start_addr, zone_infos[i].end_addr
+                );
+                error!("  Total pages: {}", zone_infos[i].total_pages);
+                error!(
+                    "  Free pages: {} / {}",
+                    zone_stats[i].free_pages, zone_infos[i].total_pages
+                );
+                error!("  Free blocks by order:");
+
+                for order in (0..=DEFAULT_MAX_ORDER).rev() {
+                    let count = zone_stats[i].free_pages_by_order[order];
+                    if count > 0 {
+                        let block_size = (1 << order) * page_size;
+                        let total_kb = (count * block_size) / (1024);
+                        error!(
+                            "    Order {}: {} blocks ({} KB each, {} KB total)",
+                            order,
+                            count,
+                            block_size / (1024),
+                            total_kb
+                        );
+                    }
                 }
+                error!("----------------------------------------");
             }
-            error!("----------------------------------------");
-        }
 
-        error!("========================================");
+            error!("========================================");
+        }
     }
 }

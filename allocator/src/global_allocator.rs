@@ -14,6 +14,8 @@ use super::buddy::BuddyStats;
 use super::page_allocator::CompositePageAllocator;
 use super::slab::{PageAllocatorForSlab, SlabByteAllocator};
 use kspin::SpinNoIrq;
+
+#[cfg(feature = "log")]
 use log::{error, info};
 
 const MIN_HEAP_SIZE: usize = 0x8000; // 32KB minimum heap

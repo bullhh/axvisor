@@ -47,6 +47,8 @@
 
 use crate::buddy::{BuddyPageAllocator, DEFAULT_MAX_ORDER};
 use crate::{AllocError, AllocResult, BaseAllocator, PageAllocator};
+
+#[cfg(feature = "log")]
 use log::{debug, info, warn};
 
 /// Maximum number of buddy blocks in a single contiguous allocation
