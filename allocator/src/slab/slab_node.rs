@@ -4,7 +4,7 @@
 //! using a fixed bitmap.
 
 #[cfg(feature = "log")]
-use log::{error, warn};
+use log::{error};
 
 pub use super::slab_byte_allocator::SizeClass;
 
