@@ -12,6 +12,7 @@ extern crate axstd as std;
 extern crate axruntime;
 extern crate driver;
 
+mod allocator_benchmark;
 mod hal;
 mod logo;
 mod shell;
@@ -22,6 +23,11 @@ mod vmm;
 fn main() {
     logo::print_logo();
 
+    // Run allocator comprehensive tests
+    info!("\n");
+    info!("Starting allocator comprehensive benchmarks...");
+    allocator_benchmark::run_comprehensive_tests();
+
     info!("Starting virtualization...");
     info!("Hardware support: {:?}", axvm::has_hardware_support());
     hal::enable_virtualization();
@@ -30,6 +36,8 @@ fn main() {
     vmm::start();
 
     info!("[OK] Default guest initialized");
+
+
 
     shell::console_init();
 }
