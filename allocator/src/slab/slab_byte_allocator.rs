@@ -143,7 +143,7 @@ impl<const PAGE_SIZE: usize> SlabByteAllocator<PAGE_SIZE> {
 
     /// Initialize the allocator
     pub fn init(&mut self) {
-        self.global_pool.init_free_list();
+        self.global_pool.init();
     }
 
     pub fn set_page_allocator(&mut self, page_allocator: *mut dyn PageAllocatorForSlab) {

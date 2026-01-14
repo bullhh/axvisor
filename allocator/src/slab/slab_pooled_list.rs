@@ -4,6 +4,7 @@
 //! providing O(1) operations without heap allocation.
 
 use super::slab_node_pool::GlobalSlabNodePool;
+use super::slab_node::SlabNode;
 
 /// Pooled linked list using GlobalSlabNodePool
 pub struct SlabPooledLinkedList {
@@ -31,17 +32,25 @@ impl SlabPooledLinkedList {
 
     /// Push to back of list
     pub fn push_back(&mut self, pool: &mut GlobalSlabNodePool, idx: usize) {
-        pool.nodes[idx].next = None;
+        if let Some(node_addr) = pool.get_node_addr(idx) {
+            unsafe {
+                let node = &mut *(node_addr as *mut super::slab_node_pool::ListNode<SlabNode>);
+                node.next = None;
 
-        if let Some(tail_idx) = self.tail {
-            pool.nodes[tail_idx].next = Some(idx);
-            pool.nodes[idx].prev = Some(tail_idx);
-        } else {
-            pool.nodes[idx].prev = None;
-            self.head = Some(idx);
+                if let Some(tail_idx) = self.tail {
+                    if let Some(tail_addr) = pool.get_node_addr(tail_idx) {
+                        let tail = &mut *(tail_addr as *mut super::slab_node_pool::ListNode<SlabNode>);
+                        tail.next = Some(idx);
+                        node.prev = Some(tail_idx);
+                    }
+                } else {
+                    node.prev = None;
+                    self.head = Some(idx);
+                }
+
+                self.tail = Some(idx);
+            }
         }
-
-        self.tail = Some(idx);
         self.len += 1;
     }
 
@@ -49,13 +58,20 @@ impl SlabPooledLinkedList {
     pub fn pop_back(&mut self, pool: &mut GlobalSlabNodePool) -> Option<usize> {
         let idx = self.tail?;
 
-        let node = pool.nodes[idx];
-        self.tail = node.prev;
+        if let Some(node_addr) = pool.get_node_addr(idx) {
+            unsafe {
+                let node = &*(node_addr as *const super::slab_node_pool::ListNode<SlabNode>);
+                self.tail = node.prev;
 
-        if let Some(new_tail) = self.tail {
-            pool.nodes[new_tail].next = None;
-        } else {
-            self.head = None;
+                if let Some(new_tail) = self.tail {
+                    if let Some(tail_addr) = pool.get_node_addr(new_tail) {
+                        let tail = &mut *(tail_addr as *mut super::slab_node_pool::ListNode<SlabNode>);
+                        tail.next = None;
+                    }
+                } else {
+                    self.head = None;
+                }
+            }
         }
 
         self.len -= 1;
@@ -66,13 +82,20 @@ impl SlabPooledLinkedList {
     pub fn pop_front(&mut self, pool: &mut GlobalSlabNodePool) -> Option<usize> {
         let idx = self.head?;
 
-        let node = pool.nodes[idx];
-        self.head = node.next;
+        if let Some(node_addr) = pool.get_node_addr(idx) {
+            unsafe {
+                let node = &*(node_addr as *const super::slab_node_pool::ListNode<SlabNode>);
+                self.head = node.next;
 
-        if let Some(new_head) = self.head {
-            pool.nodes[new_head].prev = None;
-        } else {
-            self.tail = None;
+                if let Some(new_head) = self.head {
+                    if let Some(head_addr) = pool.get_node_addr(new_head) {
+                        let head = &mut *(head_addr as *mut super::slab_node_pool::ListNode<SlabNode>);
+                        head.prev = None;
+                    }
+                } else {
+                    self.tail = None;
+                }
+            }
         }
 
         self.len -= 1;
@@ -81,24 +104,35 @@ impl SlabPooledLinkedList {
 
     /// Remove node by index
     pub fn remove(&mut self, pool: &mut GlobalSlabNodePool, idx: usize) {
-        let prev = pool.nodes[idx].prev;
-        let next = pool.nodes[idx].next;
+        if let Some(node_addr) = pool.get_node_addr(idx) {
+            unsafe {
+                let node = &*(node_addr as *const super::slab_node_pool::ListNode<SlabNode>);
+                let prev = node.prev;
+                let next = node.next;
 
-        match prev {
-            Some(prev_idx) => {
-                pool.nodes[prev_idx].next = next;
-            }
-            None => {
-                self.head = next;
-            }
-        }
+                match prev {
+                    Some(prev_idx) => {
+                        if let Some(prev_addr) = pool.get_node_addr(prev_idx) {
+                            let prev_node = &mut *(prev_addr as *mut super::slab_node_pool::ListNode<SlabNode>);
+                            prev_node.next = next;
+                        }
+                    }
+                    None => {
+                        self.head = next;
+                    }
+                }
 
-        match next {
-            Some(next_idx) => {
-                pool.nodes[next_idx].prev = prev;
-            }
-            None => {
-                self.tail = prev;
+                match next {
+                    Some(next_idx) => {
+                        if let Some(next_addr) = pool.get_node_addr(next_idx) {
+                            let next_node = &mut *(next_addr as *mut super::slab_node_pool::ListNode<SlabNode>);
+                            next_node.prev = prev;
+                        }
+                    }
+                    None => {
+                        self.tail = prev;
+                    }
+                }
             }
         }
 
@@ -123,7 +157,14 @@ impl SlabPooledLinkedList {
         let mut current = self.head;
         while let Some(idx) = current {
             f(idx);
-            current = pool.nodes[idx].next;
+            if let Some(node_addr) = pool.get_node_addr(idx) {
+                unsafe {
+                    let node = &*(node_addr as *const super::slab_node_pool::ListNode<SlabNode>);
+                    current = node.next;
+                }
+            } else {
+                break;
+            }
         }
     }
 
@@ -134,7 +175,14 @@ impl SlabPooledLinkedList {
             if idx == target {
                 return true;
             }
-            current = pool.nodes[idx].next;
+            if let Some(node_addr) = pool.get_node_addr(idx) {
+                unsafe {
+                    let node = &*(node_addr as *const super::slab_node_pool::ListNode<SlabNode>);
+                    current = node.next;
+                }
+            } else {
+                break;
+            }
         }
         false
     }
@@ -159,12 +207,13 @@ mod tests {
     #[test]
     fn test_push_back() {
         let mut pool = GlobalSlabNodePool::new();
-        pool.init_free_list();
+        pool.init();
 
         let mut list = SlabPooledLinkedList::new();
+        let mut page_allocator = MockPageAllocator::new();
 
         let node1 = SlabNode::new(0x1000, SizeClass::Bytes64);
-        let idx1 = pool.alloc_node(node1).unwrap();
+        let idx1 = pool.alloc_node(node1, &mut page_allocator, 4096).unwrap();
         list.push_back(&mut pool, idx1);
 
         assert!(!list.is_empty());
@@ -176,14 +225,15 @@ mod tests {
     #[test]
     fn test_push_multiple() {
         let mut pool = GlobalSlabNodePool::new();
-        pool.init_free_list();
+        pool.init();
 
         let mut list = SlabPooledLinkedList::new();
+        let mut page_allocator = MockPageAllocator::new();
 
         let mut indices = alloc::vec::Vec::new();
         for i in 0..5 {
             let node = SlabNode::new(0x1000 + i * 0x1000, SizeClass::Bytes64);
-            let idx = pool.alloc_node(node).unwrap();
+            let idx = pool.alloc_node(node, &mut page_allocator, 4096).unwrap();
             indices.push(idx);
             list.push_back(&mut pool, idx);
         }
@@ -192,7 +242,6 @@ mod tests {
         assert_eq!(list.front(), Some(indices[0]));
         assert_eq!(list.back(), Some(indices[4]));
 
-        // Check order using for_each_index
         let mut collected = alloc::vec::Vec::new();
         list.for_each_index(&pool, |idx| collected.push(idx));
         assert_eq!(collected, indices);
@@ -201,15 +250,16 @@ mod tests {
     #[test]
     fn test_pop_back() {
         let mut pool = GlobalSlabNodePool::new();
-        pool.init_free_list();
+        pool.init();
 
         let mut list = SlabPooledLinkedList::new();
+        let mut page_allocator = MockPageAllocator::new();
 
         let node1 = SlabNode::new(0x1000, SizeClass::Bytes64);
         let node2 = SlabNode::new(0x2000, SizeClass::Bytes64);
 
-        let idx1 = pool.alloc_node(node1).unwrap();
-        let idx2 = pool.alloc_node(node2).unwrap();
+        let idx1 = pool.alloc_node(node1, &mut page_allocator, 4096).unwrap();
+        let idx2 = pool.alloc_node(node2, &mut page_allocator, 4096).unwrap();
 
         list.push_back(&mut pool, idx1);
         list.push_back(&mut pool, idx2);
@@ -227,19 +277,19 @@ mod tests {
     #[test]
     fn test_remove_middle() {
         let mut pool = GlobalSlabNodePool::new();
-        pool.init_free_list();
+        pool.init();
 
         let mut list = SlabPooledLinkedList::new();
+        let mut page_allocator = MockPageAllocator::new();
 
         let mut indices = alloc::vec::Vec::new();
         for i in 0..5 {
             let node = SlabNode::new(0x1000 + i * 0x1000, SizeClass::Bytes64);
-            let idx = pool.alloc_node(node).unwrap();
+            let idx = pool.alloc_node(node, &mut page_allocator, 4096).unwrap();
             indices.push(idx);
             list.push_back(&mut pool, idx);
         }
 
-        // Remove middle element (index 2)
         list.remove(&mut pool, indices[2]);
 
         assert_eq!(list.len(), 4);
@@ -255,19 +305,19 @@ mod tests {
     #[test]
     fn test_remove_front() {
         let mut pool = GlobalSlabNodePool::new();
-        pool.init_free_list();
+        pool.init();
 
         let mut list = SlabPooledLinkedList::new();
+        let mut page_allocator = MockPageAllocator::new();
 
         let mut indices = alloc::vec::Vec::new();
         for i in 0..3 {
             let node = SlabNode::new(0x1000 + i * 0x1000, SizeClass::Bytes64);
-            let idx = pool.alloc_node(node).unwrap();
+            let idx = pool.alloc_node(node, &mut page_allocator, 4096).unwrap();
             indices.push(idx);
             list.push_back(&mut pool, idx);
         }
 
-        // Remove front
         list.remove(&mut pool, indices[0]);
 
         assert_eq!(list.front(), Some(indices[1]));
@@ -277,22 +327,42 @@ mod tests {
     #[test]
     fn test_remove_back() {
         let mut pool = GlobalSlabNodePool::new();
-        pool.init_free_list();
+        pool.init();
 
         let mut list = SlabPooledLinkedList::new();
+        let mut page_allocator = MockPageAllocator::new();
 
         let mut indices = alloc::vec::Vec::new();
         for i in 0..3 {
             let node = SlabNode::new(0x1000 + i * 0x1000, SizeClass::Bytes64);
-            let idx = pool.alloc_node(node).unwrap();
+            let idx = pool.alloc_node(node, &mut page_allocator, 4096).unwrap();
             indices.push(idx);
             list.push_back(&mut pool, idx);
         }
 
-        // Remove back
         list.remove(&mut pool, indices[2]);
 
         assert_eq!(list.back(), Some(indices[1]));
         assert_eq!(list.len(), 2);
+    }
+
+    struct MockPageAllocator {
+        next_addr: core::sync::atomic::AtomicUsize,
+    }
+
+    impl MockPageAllocator {
+        fn new() -> Self {
+            Self {
+                next_addr: core::sync::atomic::AtomicUsize::new(0x2000000),
+            }
+        }
+    }
+
+    impl super::super::slab_node_pool::PageAllocatorForSlab for MockPageAllocator {
+        fn alloc_pages(&mut self, count: usize, _page_size: usize) -> crate::AllocResult<usize> {
+            Ok(self.next_addr.fetch_add(count * 4096, core::sync::atomic::Ordering::SeqCst))
+        }
+
+        fn dealloc_pages(&mut self, _addr: usize, _count: usize) {}
     }
 }
