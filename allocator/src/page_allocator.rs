@@ -218,100 +218,6 @@ impl<const PAGE_SIZE: usize> CompositePageAllocator<PAGE_SIZE> {
         None
     }
 
-    /// Backward decomposition: decompose excess memory back to buddy system.
-    ///
-    /// When buddy allocates more pages than requested (e.g., 2048 for 1536 request),
-    /// this function returns excess memory back to buddy system.
-    ///
-    /// # Algorithm
-    /// 1. Calculate excess pages: buddy_pages - num_pages
-    /// 2. Start from end address (base_addr + buddy_pages * PAGE_SIZE), which is aligned
-    /// 3. Decompose excess from back to front using largest power-of-2 chunks
-    /// 4. Each chunk is guaranteed to be aligned because we start from aligned boundary
-    fn backward_decompose_overflow(
-        &mut self,
-        base_addr: usize,
-        num_pages: usize,
-        buddy_pages: usize,
-    ) -> AllocResult<()> {
-        let excess = buddy_pages - num_pages;
-
-        if excess == 0 {
-            return Ok(());
-        }
-
-        // Start from end address (aligned to buddy_pages), work backwards
-        let end_addr = base_addr + buddy_pages * PAGE_SIZE;
-        let mut remaining = excess;
-        let mut current_addr = end_addr;
-
-        debug!(
-            "Backward decomposing: base={:#x}, user_pages={}, buddy_pages={}, excess={}",
-            base_addr, num_pages, buddy_pages, excess
-        );
-
-        // Decompose excess into power-of-2 chunks from back to front
-        // This ensures all chunks are aligned because end_addr is aligned
-        while remaining > 0 {
-            // Find largest power of 2 that fits in remaining
-            let highest_bit = remaining.ilog2();
-            let chunk_pages = 1usize << highest_bit;
-
-            // Move backward by chunk_pages
-            current_addr -= chunk_pages * PAGE_SIZE;
-
-            // Check alignment (should always pass if logic is correct)
-            let pfn = current_addr / PAGE_SIZE;
-            if pfn & (chunk_pages - 1) != 0 {
-                warn!(
-                    "  Address {:#x} not aligned for {} pages, pfn={}, mask={}",
-                    current_addr,
-                    chunk_pages,
-                    pfn,
-                    chunk_pages - 1
-                );
-                return Err(AllocError::InvalidParam);
-            }
-
-            // Return this chunk to buddy
-            debug!(
-                "  Returning excess: addr={:#x}, pages={}, order={}, size={} MB",
-                current_addr,
-                chunk_pages,
-                highest_bit,
-                (chunk_pages * PAGE_SIZE) / (1024 * 1024)
-            );
-            self.buddy.dealloc_pages(current_addr, chunk_pages);
-
-            remaining -= chunk_pages;
-        }
-
-        Ok(())
-    }
-
-    /// Decompose a non-power-of-2 page count into power-of-2 chunks.
-    ///
-    /// This is used when deallocating memory that wasn't a power-of-2 allocation.
-    /// Each chunk is returned to the buddy separately.
-    fn dealloc_non_power_of_two(&mut self, mut addr: usize, mut pages: usize) {
-        debug!(
-            "Deallocating non-power-of-2: {} pages at {:#x}",
-            pages, addr
-        );
-
-        while pages > 0 {
-            // Binary decomposition: find largest power of 2 <= pages
-            let highest_bit = pages.ilog2();
-            let chunk_pages = 1usize << highest_bit;
-
-            self.buddy.dealloc_pages(addr, chunk_pages);
-
-            // Move to next chunk
-            addr += chunk_pages * PAGE_SIZE;
-            pages -= chunk_pages;
-        }
-    }
-
     /// Print detailed statistics when allocation fails.
     ///
     /// This function delegates to buddy allocator's detailed statistics reporter.
@@ -362,9 +268,6 @@ impl<const PAGE_SIZE: usize> PageAllocator for CompositePageAllocator<PAGE_SIZE>
             return Ok(base_addr);
         }
 
-        // Backward decomposition: decompose excess memory back to buddy
-        // self.backward_decompose_overflow(base_addr, num_pages, buddy_pages)?;
-
         Ok(base_addr)
     }
 
@@ -386,8 +289,6 @@ impl<const PAGE_SIZE: usize> PageAllocator for CompositePageAllocator<PAGE_SIZE>
             self.buddy.dealloc_pages(pos, num_pages);
         } else {
             self.buddy.dealloc_pages(pos, num_pages.next_power_of_two());
-            // Non-power-of-2: decompose into power-of-2 chunks
-            // self.dealloc_non_power_of_two(pos,num_pages);
         }
     }
 
