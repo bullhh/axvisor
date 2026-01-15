@@ -14,8 +14,6 @@ use crate::{AllocError, AllocResult, ByteAllocator};
 // Re-export public types from sibling modules
 pub use super::slab_cache::SlabCache;
 pub use super::slab_node::SlabNode;
-pub use super::slab_node_pool::GlobalSlabNodePool;
-pub use super::slab_pooled_list::SlabPooledLinkedList;
 
 /// Size classes for slab allocation
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,7 +107,6 @@ pub trait PageAllocatorForSlab {
 
 /// Slab byte allocator with pooled linked lists
 pub struct SlabByteAllocator<const PAGE_SIZE: usize = { crate::DEFAULT_PAGE_SIZE }> {
-    global_pool: GlobalSlabNodePool,
     caches: [SlabCache; SizeClass::COUNT],
     page_allocator: Option<*mut dyn PageAllocatorForSlab>,
     total_bytes: usize,
@@ -123,7 +120,6 @@ unsafe impl<const PAGE_SIZE: usize> Sync for SlabByteAllocator<PAGE_SIZE> {}
 impl<const PAGE_SIZE: usize> SlabByteAllocator<PAGE_SIZE> {
     pub const fn new() -> Self {
         Self {
-            global_pool: GlobalSlabNodePool::new(),
             caches: [
                 SlabCache::new(SizeClass::Bytes8),
                 SlabCache::new(SizeClass::Bytes16),
@@ -143,7 +139,6 @@ impl<const PAGE_SIZE: usize> SlabByteAllocator<PAGE_SIZE> {
 
     /// Initialize the allocator
     pub fn init(&mut self) {
-        self.global_pool.init();
     }
 
     pub fn set_page_allocator(&mut self, page_allocator: *mut dyn PageAllocatorForSlab) {
@@ -169,7 +164,7 @@ impl<const PAGE_SIZE: usize> ByteAllocator for SlabByteAllocator<PAGE_SIZE> {
         let cache = &mut self.caches[size_class.to_index()];
 
         let (obj_addr, page_bytes) =
-            cache.alloc_object(&mut self.global_pool, page_allocator, PAGE_SIZE)?;
+            cache.alloc_object(page_allocator, PAGE_SIZE)?;
         self.allocated_bytes += layout.size().max(layout.align());
         self.total_bytes += page_bytes;
 
@@ -188,7 +183,7 @@ impl<const PAGE_SIZE: usize> ByteAllocator for SlabByteAllocator<PAGE_SIZE> {
         let cache = &mut self.caches[size_class.to_index()];
 
         let freed_bytes =
-            cache.dealloc_object(&mut self.global_pool, obj_addr, page_allocator, PAGE_SIZE);
+            cache.dealloc_object(obj_addr, page_allocator, PAGE_SIZE);
         self.allocated_bytes = self
             .allocated_bytes
             .saturating_sub(layout.size().max(layout.align()));

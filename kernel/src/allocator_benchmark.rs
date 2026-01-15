@@ -57,6 +57,8 @@ pub struct AllocatorMetrics {
     pub total_dealloc_time_ns: AtomicU64,
     pub min_alloc_time_ns: AtomicU64,
     pub max_alloc_time_ns: AtomicU64,
+    pub min_dealloc_time_ns: AtomicU64,
+    pub max_dealloc_time_ns: AtomicU64,
 
     // Peak statistics
     pub peak_allocated_bytes: AtomicUsize,
@@ -76,6 +78,8 @@ impl AllocatorMetrics {
             total_dealloc_time_ns: AtomicU64::new(0),
             min_alloc_time_ns: AtomicU64::new(u64::MAX),
             max_alloc_time_ns: AtomicU64::new(0),
+            min_dealloc_time_ns: AtomicU64::new(u64::MAX),
+            max_dealloc_time_ns: AtomicU64::new(0),
             peak_allocated_bytes: AtomicUsize::new(0),
             current_allocated_bytes: AtomicUsize::new(0),
         }
@@ -144,6 +148,35 @@ impl AllocatorMetrics {
         self.total_deallocations.fetch_add(1, Ordering::Relaxed);
         self.total_dealloc_time_ns.fetch_add(duration_ns, Ordering::Relaxed);
         self.current_allocated_bytes.fetch_sub(size, Ordering::Relaxed);
+
+        // Update min/max dealloc time
+        let mut min_time = self.min_dealloc_time_ns.load(Ordering::Relaxed);
+        loop {
+            if duration_ns >= min_time {
+                break;
+            }
+            match self.min_dealloc_time_ns.compare_exchange_weak(
+                min_time, duration_ns,
+                Ordering::Relaxed, Ordering::Relaxed
+            ) {
+                Ok(_) => break,
+                Err(new) => min_time = new,
+            }
+        }
+
+        let mut max_time = self.max_dealloc_time_ns.load(Ordering::Relaxed);
+        loop {
+            if duration_ns <= max_time {
+                break;
+            }
+            match self.max_dealloc_time_ns.compare_exchange_weak(
+                max_time, duration_ns,
+                Ordering::Relaxed, Ordering::Relaxed
+            ) {
+                Ok(_) => break,
+                Err(new) => max_time = new,
+            }
+        }
     }
 
     pub fn check_leaks(&self) -> bool {
@@ -163,6 +196,16 @@ impl AllocatorMetrics {
     pub fn calculate_avg_alloc_latency(&self) -> f64 {
         let count = self.total_allocations.load(Ordering::Relaxed);
         let total_time = self.total_alloc_time_ns.load(Ordering::Relaxed);
+        if count == 0 {
+            0.0
+        } else {
+            total_time as f64 / count as f64
+        }
+    }
+
+    pub fn calculate_avg_dealloc_latency(&self) -> f64 {
+        let count = self.total_deallocations.load(Ordering::Relaxed);
+        let total_time = self.total_dealloc_time_ns.load(Ordering::Relaxed);
         if count == 0 {
             0.0
         } else {
@@ -193,10 +236,23 @@ impl AllocatorMetrics {
         info!("  大对象 (>1MB):    {}", self.large_allocs.load(Ordering::Relaxed));
 
         info!("\n性能指标:");
-        let avg_latency = self.calculate_avg_alloc_latency();
-        info!("  平均分配延迟: {:.2} ns", avg_latency);
-        info!("  最小分配延迟: {} ns", self.min_alloc_time_ns.load(Ordering::Relaxed));
-        info!("  最大分配延迟: {} ns", self.max_alloc_time_ns.load(Ordering::Relaxed));
+        // 分配性能
+        let avg_alloc_latency = self.calculate_avg_alloc_latency();
+        info!("  分配性能:");
+        info!("    平均延迟: {:.2} ns", avg_alloc_latency);
+        info!("    最小延迟: {} ns", self.min_alloc_time_ns.load(Ordering::Relaxed));
+        info!("    最大延迟: {} ns", self.max_alloc_time_ns.load(Ordering::Relaxed));
+        info!("    总时间: {} ns", self.total_alloc_time_ns.load(Ordering::Relaxed));
+        info!("    操作数: {}", self.total_allocations.load(Ordering::Relaxed));
+        
+        // 释放性能
+        let avg_dealloc_latency = self.calculate_avg_dealloc_latency();
+        info!("  释放性能:");
+        info!("    平均延迟: {:.2} ns", avg_dealloc_latency);
+        info!("    最小延迟: {} ns", self.min_dealloc_time_ns.load(Ordering::Relaxed));
+        info!("    最大延迟: {} ns", self.max_dealloc_time_ns.load(Ordering::Relaxed));
+        info!("    总时间: {} ns", self.total_dealloc_time_ns.load(Ordering::Relaxed));
+        info!("    操作数: {}", self.total_deallocations.load(Ordering::Relaxed));
 
         info!("\n内存使用:");
         info!("  峰值分配: {} bytes ({} MB)",
@@ -592,39 +648,52 @@ pub mod performance_tests {
 
         for size in test_sizes {
             let iterations = 50000;
-            let start_time = get_time_ns();
 
             // 分配阶段
+            let alloc_start_time = get_time_ns();
             let mut allocs: Vec<*mut u8> = Vec::with_capacity(iterations);
             for _ in 0..iterations {
                 unsafe {
+                    let single_alloc_start = get_time_ns();
                     let layout = core::alloc::Layout::from_size_align_unchecked(size, 8);
                     let ptr = alloc::alloc::alloc(layout);
                     if !ptr.is_null() {
                         allocs.push(ptr);
-                        let duration = get_time_ns() - start_time;
+                        let duration = get_time_ns() - single_alloc_start;
                         metrics.record_alloc(size, duration);
                     }
                 }
             }
+            let alloc_end_time = get_time_ns();
+            let alloc_time_ns = alloc_end_time - alloc_start_time;
+            let alloc_throughput = (iterations as f64) / (alloc_time_ns as f64 / 1_000_000_000.0);
 
             // 释放阶段
+            let dealloc_start_time = get_time_ns();
             for ptr in &allocs {
                 unsafe {
+                    let single_dealloc_start = get_time_ns();
                     let layout = core::alloc::Layout::from_size_align_unchecked(size, 8);
-                    let dealloc_start = get_time_ns();
                     alloc::alloc::dealloc(*ptr, layout);
-                    let dealloc_duration = get_time_ns() - dealloc_start;
-                    metrics.record_dealloc(size, dealloc_duration);
+                    let duration = get_time_ns() - single_dealloc_start;
+                    metrics.record_dealloc(size, duration);
                 }
             }
+            let dealloc_end_time = get_time_ns();
+            let dealloc_time_ns = dealloc_end_time - dealloc_start_time;
+            let dealloc_throughput = (iterations as f64) / (dealloc_time_ns as f64 / 1_000_000_000.0);
 
-            let end_time = get_time_ns();
-            let total_time_ns = end_time - start_time;
-            let throughput = (iterations as f64 * 2.0) / (total_time_ns as f64 / 1_000_000_000.0);
+            let total_time_ns = alloc_time_ns + dealloc_time_ns;
+            let total_throughput = (iterations as f64 * 2.0) / (total_time_ns as f64 / 1_000_000_000.0);
 
-            info!("  大小 {:>4} 字节: 吞吐量 {:>8.2} M ops/s, 耗时 {}",
-                size, throughput / 1_000_000.0, format_time_ns(total_time_ns));
+            info!("  大小 {:>4} 字节:", size);
+            info!("    分配: {:.2} M ops/s, 耗时 {}", 
+                alloc_throughput / 1_000_000.0, format_time_ns(alloc_time_ns));
+            info!("    释放: {:.2} M ops/s, 耗时 {}", 
+                dealloc_throughput / 1_000_000.0, format_time_ns(dealloc_time_ns));
+            info!("    总计: {:.2} M ops/s, 耗时 {}", 
+                total_throughput / 1_000_000.0, format_time_ns(total_time_ns));
+            info!("    分配/释放时间比例: {:.2}:1", alloc_time_ns as f64 / dealloc_time_ns.max(1) as f64);
         }
 
         info!("  ✓ 固定大小小对象测试完成\n");

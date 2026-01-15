@@ -6,19 +6,34 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
-use buddy_slab_allocator::buddy::BuddySet;
+use buddy_slab_allocator::buddy::{BuddySet, GlobalNodePool, DEFAULT_MAX_ORDER};
+use kspin::SpinNoIrq;
+
+static GLOBAL_POOL: SpinNoIrq<GlobalNodePool> = SpinNoIrq::new(GlobalNodePool::new());
+
+const PAGE_SIZE: usize = 4096;
+
+fn free_pages(buddy: &BuddySet<PAGE_SIZE>) -> usize {
+    let mut total = 0usize;
+    for order in 0..=DEFAULT_MAX_ORDER {
+        total += buddy.get_order_block_count(order) * (1usize << order);
+    }
+    total
+}
 
 /// Test basic list allocation when order 0 exceeds 64 blocks
 #[test]
 fn test_basic_list_allocation() {
-    let mut buddy = BuddySet::new(0x1000_0000, 1024 * 4096, 0); // 4MB
-    buddy.init(0x1000_0000, 1024 * 4096);
+    let mut pool = GLOBAL_POOL.lock();
+    pool.init();
+    let mut buddy: BuddySet<PAGE_SIZE> = BuddySet::new(0x1000_0000, 1024 * 4096, 0); // 4MB
+    buddy.init(&mut pool, 0x1000_0000, 1024 * 4096);
 
     // Allocate 65 order-0 blocks (more than MAX_BLOCKS_PER_LIST)
     let mut allocations = Vec::new();
 
     for _ in 0..65 {
-        if let Ok(addr) = buddy.alloc_pages(1, 4096) {
+        if let Ok(addr) = buddy.alloc_pages(&mut pool, 1, 4096) {
             allocations.push(addr);
         }
     }
@@ -27,98 +42,99 @@ fn test_basic_list_allocation() {
 
     // Now free them all - this should require allocating multiple lists
     for addr in allocations {
-        buddy.dealloc_pages(addr, 1);
+        buddy.dealloc_pages(&mut pool, addr, 1);
     }
 
     // Check that we have some blocks (may be merged to higher orders)
     // The key is that blocks were successfully freed without being discarded
-    let total_free = buddy.get_stats().free_pages;
+    let total_free = free_pages(&buddy);
     assert_eq!(total_free, 1024, "Should have all 1024 pages freed");
 }
 
 /// Test multiple orders sharing lists
 #[test]
 fn test_multiple_orders_share_pool() {
-    let mut buddy = BuddySet::new(0x2000_0000, 4096 * 1024, 0); // 4MB
-    buddy.init(0x2000_0000, 4096 * 1024);
+    let mut pool = GLOBAL_POOL.lock();
+    pool.init();
+    let mut buddy: BuddySet<PAGE_SIZE> = BuddySet::new(0x2000_0000, 4096 * 1024, 0); // 4MB
+    buddy.init(&mut pool, 0x2000_0000, 4096 * 1024);
 
     // Allocate blocks from different orders
     let mut allocs = Vec::new();
 
     // Order 0: 100 blocks
     for _ in 0..100 {
-        if let Ok(addr) = buddy.alloc_pages(1, 4096) {
+        if let Ok(addr) = buddy.alloc_pages(&mut pool, 1, 4096) {
             allocs.push((addr, 1));
         }
     }
 
     // Order 1: 50 blocks (2 pages each)
     for _ in 0..50 {
-        if let Ok(addr) = buddy.alloc_pages(2, 4096) {
+        if let Ok(addr) = buddy.alloc_pages(&mut pool, 2, 4096) {
             allocs.push((addr, 2));
         }
     }
 
     // Order 2: 30 blocks (4 pages each)
     for _ in 0..30 {
-        if let Ok(addr) = buddy.alloc_pages(4, 4096) {
+        if let Ok(addr) = buddy.alloc_pages(&mut pool, 4, 4096) {
             allocs.push((addr, 4));
         }
     }
 
     // Free everything
     for (addr, size) in allocs {
-        buddy.dealloc_pages(addr, size);
+        buddy.dealloc_pages(&mut pool, addr, size);
     }
 
     // Check that all pages are freed
-    let total_free = buddy.get_stats().free_pages;
+    let total_free = free_pages(&buddy);
     assert_eq!(total_free, 1024, "Should have all 1024 pages freed");
 }
 
 /// Test list release when empty
 #[test]
 fn test_list_release_on_empty() {
-    let mut buddy = BuddySet::new(0x3000_0000, 4096 * 1024, 0); // 4MB
-    buddy.init(0x3000_0000, 4096 * 1024);
+    let mut pool = GlobalNodePool::new();
+    pool.init();
+    let mut buddy: BuddySet<PAGE_SIZE> = BuddySet::new(0x3000_0000, 4096 * 1024, 0); // 4MB
+    buddy.init(&mut pool, 0x3000_0000, 4096 * 1024);
 
     // Allocate and free in a way that causes multiple lists to be allocated
     let mut allocs = Vec::new();
 
     // First, allocate 65 blocks
     for _ in 0..65 {
-        if let Ok(addr) = buddy.alloc_pages(1, 4096) {
+        if let Ok(addr) = buddy.alloc_pages(&mut pool, 1, 4096) {
             allocs.push(addr);
         }
     }
 
     // Free 63 of them (leaving 2)
     for i in 0..63 {
-        buddy.dealloc_pages(allocs[i], 1);
+        buddy.dealloc_pages(&mut pool, allocs[i], 1);
     }
 
     // Allocate and free 65 more blocks
     let mut allocs2 = Vec::new();
     for _ in 0..65 {
-        if let Ok(addr) = buddy.alloc_pages(1, 4096) {
+        if let Ok(addr) = buddy.alloc_pages(&mut pool, 1, 4096) {
             allocs2.push(addr);
         }
     }
 
     for addr in allocs2 {
-        buddy.dealloc_pages(addr, 1);
+        buddy.dealloc_pages(&mut pool, addr, 1);
     }
 
     // Free the remaining 2
     for i in 63..65 {
-        buddy.dealloc_pages(allocs[i], 1);
+        buddy.dealloc_pages(&mut pool, allocs[i], 1);
     }
 
-    // Check stats
-    let stats = buddy.get_pool_stats();
-    assert!(stats.used_lists <= 64, "Should not exceed total lists");
     assert_eq!(
-        buddy.get_stats().free_pages,
+        free_pages(&buddy),
         1024,
         "All pages should be freed"
     );
@@ -127,14 +143,16 @@ fn test_list_release_on_empty() {
 /// Test stress: allocate and free many small blocks
 #[test]
 fn test_stress_small_blocks() {
-    let mut buddy = BuddySet::new(0x4000_0000, 4096 * 2048, 0); // 8MB
-    buddy.init(0x4000_0000, 4096 * 2048);
+    let mut pool = GlobalNodePool::new();
+    pool.init();
+    let mut buddy: BuddySet<PAGE_SIZE> = BuddySet::new(0x4000_0000, 4096 * 2048, 0); // 8MB
+    buddy.init(&mut pool, 0x4000_0000, 4096 * 2048);
 
     let mut allocs = Vec::new();
 
     // Allocate 200 order-0 blocks
     for _ in 0..200 {
-        if let Ok(addr) = buddy.alloc_pages(1, 4096) {
+        if let Ok(addr) = buddy.alloc_pages(&mut pool, 1, 4096) {
             allocs.push(addr);
         }
     }
@@ -150,12 +168,12 @@ fn test_stress_small_blocks() {
     }
 
     for idx in indices {
-        buddy.dealloc_pages(allocs[idx], 1);
+        buddy.dealloc_pages(&mut pool, allocs[idx], 1);
     }
 
     // All should be freed
     assert_eq!(
-        buddy.get_stats().free_pages,
+        free_pages(&buddy),
         2048,
         "All 2048 pages should be freed"
     );
@@ -164,30 +182,32 @@ fn test_stress_small_blocks() {
 /// Test merging with multiple lists
 #[test]
 fn test_merging_with_multiple_lists() {
-    let mut buddy = BuddySet::new(0x5000_0000, 4096 * 256, 0); // 1MB
-    buddy.init(0x5000_0000, 4096 * 256);
+    let mut pool = GlobalNodePool::new();
+    pool.init();
+    let mut buddy: BuddySet<PAGE_SIZE> = BuddySet::new(0x5000_0000, 4096 * 256, 0); // 1MB
+    buddy.init(&mut pool, 0x5000_0000, 4096 * 256);
 
     let mut allocs = Vec::new();
 
     // Allocate 100 order-0 blocks
     for _ in 0..100 {
-        if let Ok(addr) = buddy.alloc_pages(1, 4096) {
+        if let Ok(addr) = buddy.alloc_pages(&mut pool, 1, 4096) {
             allocs.push(addr);
         }
     }
 
     // Free them - this will distribute across multiple lists
     for addr in allocs {
-        buddy.dealloc_pages(addr, 1);
+        buddy.dealloc_pages(&mut pool, addr, 1);
     }
 
     // Now check that merging still works - allocate a single block and free it
-    let addr = buddy.alloc_pages(1, 4096).unwrap();
-    buddy.dealloc_pages(addr, 1);
+    let addr = buddy.alloc_pages(&mut pool, 1, 4096).unwrap();
+    buddy.dealloc_pages(&mut pool, addr, 1);
 
     // After merge, we should still have all pages
     assert_eq!(
-        buddy.get_stats().free_pages,
+        free_pages(&buddy),
         256,
         "Should still have all 256 pages after merge"
     );
@@ -196,8 +216,10 @@ fn test_merging_with_multiple_lists() {
 /// Test pool exhaustion
 #[test]
 fn test_pool_exhaustion() {
-    let mut buddy = BuddySet::new(0x6000_0000, 4096 * 4096, 0); // 16MB
-    buddy.init(0x6000_0000, 4096 * 4096);
+    let mut pool = GlobalNodePool::new();
+    pool.init();
+    let mut buddy: BuddySet<PAGE_SIZE> = BuddySet::new(0x6000_0000, 4096 * 4096, 0); // 16MB
+    buddy.init(&mut pool, 0x6000_0000, 4096 * 4096);
 
     // Try to allocate more than the pool can handle
     // Pool has 64 lists * 64 blocks = 4096 blocks
@@ -205,7 +227,7 @@ fn test_pool_exhaustion() {
 
     // Try to allocate 4100 blocks (more than pool capacity)
     for _ in 0..4100 {
-        match buddy.alloc_pages(1, 4096) {
+        match buddy.alloc_pages(&mut pool, 1, 4096) {
             Ok(addr) => allocs.push(addr),
             Err(_) => break,
         }
@@ -216,12 +238,12 @@ fn test_pool_exhaustion() {
 
     // Free everything
     for addr in allocs {
-        buddy.dealloc_pages(addr, 1);
+        buddy.dealloc_pages(&mut pool, addr, 1);
     }
 
     // All pages should be back
     assert_eq!(
-        buddy.get_stats().free_pages,
+        free_pages(&buddy),
         4096,
         "All 4096 pages should be freed"
     );
@@ -230,48 +252,52 @@ fn test_pool_exhaustion() {
 /// Test list reuse after being freed
 #[test]
 fn test_list_reuse() {
-    let mut buddy = BuddySet::new(0x7000_0000, 4096 * 512, 0); // 2MB
-    buddy.init(0x7000_0000, 4096 * 512);
+    let mut pool = GlobalNodePool::new();
+    pool.init();
+    let mut buddy: BuddySet<PAGE_SIZE> = BuddySet::new(0x7000_0000, 4096 * 512, 0); // 2MB
+    buddy.init(&mut pool, 0x7000_0000, 4096 * 512);
 
     // Round 1: Allocate and free 100 blocks
     let mut allocs = Vec::new();
     for _ in 0..100 {
-        if let Ok(addr) = buddy.alloc_pages(1, 4096) {
+        if let Ok(addr) = buddy.alloc_pages(&mut pool, 1, 4096) {
             allocs.push(addr);
         }
     }
     for addr in allocs {
-        buddy.dealloc_pages(addr, 1);
+        buddy.dealloc_pages(&mut pool, addr, 1);
     }
 
-    let stats1 = buddy.get_stats();
+    let free1 = free_pages(&buddy);
 
     // Round 2: Allocate and free another 100 blocks
     let mut allocs = Vec::new();
     for _ in 0..100 {
-        if let Ok(addr) = buddy.alloc_pages(1, 4096) {
+        if let Ok(addr) = buddy.alloc_pages(&mut pool, 1, 4096) {
             allocs.push(addr);
         }
     }
     for addr in allocs {
-        buddy.dealloc_pages(addr, 1);
+        buddy.dealloc_pages(&mut pool, addr, 1);
     }
 
-    let stats2 = buddy.get_stats();
+    let free2 = free_pages(&buddy);
 
     // Stats should be similar (all pages should be freed)
     assert_eq!(
-        stats1.free_pages, stats2.free_pages,
+        free1, free2,
         "Free pages should be same"
     );
-    assert_eq!(stats1.free_pages, 512, "All pages should be freed");
+    assert_eq!(free1, 512, "All pages should be freed");
 }
 
 /// Test fragmentation with multiple orders
 #[test]
 fn test_fragmentation_scenarios() {
-    let mut buddy = BuddySet::new(0x8000_0000, 4096 * 1024, 0); // 4MB
-    buddy.init(0x8000_0000, 4096 * 1024);
+    let mut pool = GlobalNodePool::new();
+    pool.init();
+    let mut buddy: BuddySet<PAGE_SIZE> = BuddySet::new(0x8000_0000, 4096 * 1024, 0); // 4MB
+    buddy.init(&mut pool, 0x8000_0000, 4096 * 1024);
 
     let mut allocs = Vec::new();
 
@@ -279,12 +305,12 @@ fn test_fragmentation_scenarios() {
     for i in 0..64 {
         if i % 2 == 0 {
             // Order 0
-            if let Ok(addr) = buddy.alloc_pages(1, 4096) {
+            if let Ok(addr) = buddy.alloc_pages(&mut pool, 1, 4096) {
                 allocs.push((addr, 1));
             }
         } else {
             // Order 1
-            if let Ok(addr) = buddy.alloc_pages(2, 4096) {
+            if let Ok(addr) = buddy.alloc_pages(&mut pool, 2, 4096) {
                 allocs.push((addr, 2));
             }
         }
@@ -292,12 +318,12 @@ fn test_fragmentation_scenarios() {
 
     // Free everything
     for (addr, size) in allocs {
-        buddy.dealloc_pages(addr, size);
+        buddy.dealloc_pages(&mut pool, addr, size);
     }
 
     // Check that all pages are freed
     assert_eq!(
-        buddy.get_stats().free_pages,
+        free_pages(&buddy),
         1024,
         "All pages should be freed"
     );
@@ -306,36 +332,38 @@ fn test_fragmentation_scenarios() {
 /// Test order transitions
 #[test]
 fn test_order_transitions() {
-    let mut buddy = BuddySet::new(0x9000_0000, 4096 * 512, 0); // 2MB
-    buddy.init(0x9000_0000, 4096 * 512);
+    let mut pool = GlobalNodePool::new();
+    pool.init();
+    let mut buddy: BuddySet<PAGE_SIZE> = BuddySet::new(0x9000_0000, 4096 * 512, 0); // 2MB
+    buddy.init(&mut pool, 0x9000_0000, 4096 * 512);
 
     // Allocate order-2 blocks and free them
     let mut allocs = Vec::new();
     for _ in 0..40 {
-        if let Ok(addr) = buddy.alloc_pages(4, 4096) {
+        if let Ok(addr) = buddy.alloc_pages(&mut pool, 4, 4096) {
             allocs.push((addr, 4));
         }
     }
 
     for (addr, size) in &allocs {
-        buddy.dealloc_pages(*addr, *size);
+        buddy.dealloc_pages(&mut pool, *addr, *size);
     }
 
     // Now allocate and free order-0 blocks
     let mut allocs2 = Vec::new();
     for _ in 0..160 {
-        if let Ok(addr) = buddy.alloc_pages(1, 4096) {
+        if let Ok(addr) = buddy.alloc_pages(&mut pool, 1, 4096) {
             allocs2.push(addr);
         }
     }
 
     for addr in allocs2 {
-        buddy.dealloc_pages(addr, 1);
+        buddy.dealloc_pages(&mut pool, addr, 1);
     }
 
     // All pages should be freed
     assert_eq!(
-        buddy.get_stats().free_pages,
+        free_pages(&buddy),
         512,
         "All pages should be freed"
     );
@@ -344,29 +372,31 @@ fn test_order_transitions() {
 /// Test max order scenarios
 #[test]
 fn test_max_order_scenarios() {
-    let mut buddy = BuddySet::new(0xA000_0000, 4096 * 4096, 0); // 16MB
-    buddy.init(0xA000_0000, 4096 * 4096);
+    let mut pool = GlobalNodePool::new();
+    pool.init();
+    let mut buddy: BuddySet<PAGE_SIZE> = BuddySet::new(0xA000_0000, 4096 * 4096, 0); // 16MB
+    buddy.init(&mut pool, 0xA000_0000, 4096 * 4096);
 
     // Allocate a large block (order 8 = 1024 pages = 4MB)
-    if let Ok(addr) = buddy.alloc_pages(1024, 4096) {
-        buddy.dealloc_pages(addr, 1024);
+    if let Ok(addr) = buddy.alloc_pages(&mut pool, 1024, 4096) {
+        buddy.dealloc_pages(&mut pool, addr, 1024);
     }
 
     // Allocate many small blocks
     let mut allocs = Vec::new();
     for _ in 0..1000 {
-        if let Ok(addr) = buddy.alloc_pages(1, 4096) {
+        if let Ok(addr) = buddy.alloc_pages(&mut pool, 1, 4096) {
             allocs.push(addr);
         }
     }
 
     for addr in allocs {
-        buddy.dealloc_pages(addr, 1);
+        buddy.dealloc_pages(&mut pool, addr, 1);
     }
 
     // All pages should be freed
     assert_eq!(
-        buddy.get_stats().free_pages,
+        free_pages(&buddy),
         4096,
         "All pages should be freed"
     );
@@ -375,8 +405,10 @@ fn test_max_order_scenarios() {
 /// Test that list pool doesn't leak blocks
 #[test]
 fn test_no_memory_leak() {
-    let mut buddy = BuddySet::new(0xB000_0000, 4096 * 2048, 0); // 8MB
-    buddy.init(0xB000_0000, 4096 * 2048);
+    let mut pool = GlobalNodePool::new();
+    pool.init();
+    let mut buddy: BuddySet<PAGE_SIZE> = BuddySet::new(0xB000_0000, 4096 * 2048, 0); // 8MB
+    buddy.init(&mut pool, 0xB000_0000, 4096 * 2048);
 
     // Run multiple rounds of allocate and free
     for round in 0..10 {
@@ -384,18 +416,18 @@ fn test_no_memory_leak() {
         let mut allocs = Vec::new();
 
         for _ in 0..num_allocs {
-            if let Ok(addr) = buddy.alloc_pages(1, 4096) {
+            if let Ok(addr) = buddy.alloc_pages(&mut pool, 1, 4096) {
                 allocs.push(addr);
             }
         }
 
         for addr in allocs {
-            buddy.dealloc_pages(addr, 1);
+            buddy.dealloc_pages(&mut pool, addr, 1);
         }
 
         // After each round, all pages should be freed
         assert_eq!(
-            buddy.get_stats().free_pages,
+            free_pages(&buddy),
             2048,
             "Round {}: All pages should be freed",
             round
@@ -406,14 +438,16 @@ fn test_no_memory_leak() {
 /// Test that list pool handles extreme fragmentation
 #[test]
 fn test_extreme_fragmentation() {
-    let mut buddy = BuddySet::new(0xC000_0000, 4096 * 2048, 0); // 8MB
-    buddy.init(0xC000_0000, 4096 * 2048);
+    let mut pool = GlobalNodePool::new();
+    pool.init();
+    let mut buddy: BuddySet<PAGE_SIZE> = BuddySet::new(0xC000_0000, 4096 * 2048, 0); // 8MB
+    buddy.init(&mut pool, 0xC000_0000, 4096 * 2048);
 
     let mut allocs = Vec::new();
 
     // Allocate many small blocks at different addresses
     for _ in 0..500 {
-        if let Ok(addr) = buddy.alloc_pages(1, 4096) {
+        if let Ok(addr) = buddy.alloc_pages(&mut pool, 1, 4096) {
             allocs.push(addr);
         }
     }
@@ -430,12 +464,12 @@ fn test_extreme_fragmentation() {
     }
 
     for idx in indices {
-        buddy.dealloc_pages(allocs[idx], 1);
+        buddy.dealloc_pages(&mut pool, allocs[idx], 1);
     }
 
     // All pages should be freed
     assert_eq!(
-        buddy.get_stats().free_pages,
+        free_pages(&buddy),
         2048,
         "All pages should be freed"
     );
@@ -443,7 +477,7 @@ fn test_extreme_fragmentation() {
     // Verify we can still allocate
     let mut allocs2 = Vec::new();
     for _ in 0..200 {
-        if let Ok(addr) = buddy.alloc_pages(1, 4096) {
+        if let Ok(addr) = buddy.alloc_pages(&mut pool, 1, 4096) {
             allocs2.push(addr);
         }
     }

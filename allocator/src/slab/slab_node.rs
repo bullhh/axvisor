@@ -4,89 +4,172 @@
 //! using a fixed bitmap.
 
 #[cfg(feature = "log")]
-use log::{error};
+use log::error;
 
 pub use super::slab_byte_allocator::SizeClass;
 
-/// Slab node managing exactly 512 objects
+#[repr(C)]
+pub(crate) struct SlabHeader {
+    magic: u32,
+    size_class: u16,
+    object_count: u16,
+    free_count: u16,
+    _reserved: u16,
+    slab_bytes: usize,
+    prev: usize,
+    next: usize,
+    free_bitmap: [u64; 8],
+}
+
+const SLAB_HEADER_MAGIC: u32 = 0x534c_4142;
+
 #[derive(Debug, Clone, Copy)]
 pub struct SlabNode {
     pub addr: usize,           // Starting physical address
     pub size_class: SizeClass, // Size class
-    pub free_bitmap: [u64; 8], // Bitmap (512 bits)
 }
 
 impl SlabNode {
     pub const MAX_OBJECTS: usize = 512;
 
-    /// Create a new slab node with all objects free
     pub const fn new(addr: usize, size_class: SizeClass) -> Self {
-        Self {
-            addr,
-            size_class,
-            free_bitmap: [u64::MAX; 8], // All free
+        Self { addr, size_class }
+    }
+
+    fn header_size_aligned(&self) -> usize {
+        crate::align_up(core::mem::size_of::<SlabHeader>(), self.size_class.size())
+    }
+
+    fn object_base(&self) -> usize {
+        self.addr + self.header_size_aligned()
+    }
+
+    fn header(&self) -> &SlabHeader {
+        unsafe { &*(self.addr as *const SlabHeader) }
+    }
+
+    fn header_mut(&mut self) -> &mut SlabHeader {
+        unsafe { &mut *(self.addr as *mut SlabHeader) }
+    }
+
+    pub fn init_header(&mut self, slab_bytes: usize) {
+        let object_size = self.size_class.size();
+        let header_size_aligned = self.header_size_aligned();
+        let object_count = if slab_bytes > header_size_aligned {
+            (slab_bytes - header_size_aligned) / object_size
+        } else {
+            0
         }
+        .min(Self::MAX_OBJECTS);
+
+        if object_count == 0 {
+            return;
+        }
+
+        let mut free_bitmap = [u64::MAX; 8];
+        if object_count < Self::MAX_OBJECTS {
+            let full_words = object_count / 64;
+            let rem_bits = object_count % 64;
+            for i in 0..8 {
+                if i < full_words {
+                    continue;
+                }
+                if i == full_words {
+                    if rem_bits == 0 {
+                        free_bitmap[i] = 0;
+                    } else {
+                        free_bitmap[i] &= (1u64 << rem_bits) - 1;
+                    }
+                } else {
+                    free_bitmap[i] = 0;
+                }
+            }
+        }
+
+        let header = self.header_mut();
+        *header = SlabHeader {
+            magic: SLAB_HEADER_MAGIC,
+            size_class: object_size as u16,
+            object_count: object_count as u16,
+            free_count: object_count as u16,
+            _reserved: 0,
+            slab_bytes,
+            prev: 0,
+            next: 0,
+            free_bitmap,
+        };
     }
 
-    /// Calculate used objects from bitmap
+    pub fn is_valid_for_size_class(&self) -> bool {
+        let header = self.header();
+        header.magic == SLAB_HEADER_MAGIC && header.size_class as usize == self.size_class.size()
+    }
+
     pub fn in_use(&self) -> u32 {
-        self.free_bitmap.iter().map(|w| w.count_zeros()).sum()
+        let header = self.header();
+        header.object_count as u32 - header.free_count as u32
     }
 
-    /// Calculate free objects from bitmap
     pub fn free_count(&self) -> u32 {
-        self.free_bitmap.iter().map(|w| w.count_ones()).sum()
+        self.header().free_count as u32
     }
 
-    /// Check if node is full
     pub fn is_full(&self) -> bool {
-        self.free_bitmap.iter().all(|&w| w == 0)
+        self.header().free_count == 0
     }
 
-    /// Check if node is empty
     pub fn is_empty(&self) -> bool {
-        self.free_bitmap.iter().all(|&w| w == u64::MAX)
+        self.header().free_count == self.header().object_count
     }
 
-    /// Allocate one object, return object index
     pub fn alloc_object(&mut self) -> Option<usize> {
-        for (word_idx, &word) in self.free_bitmap.iter().enumerate() {
+        let header = self.header_mut();
+        if header.free_count == 0 {
+            return None;
+        }
+        let object_count = header.object_count as usize;
+        for (word_idx, &word) in header.free_bitmap.iter().enumerate() {
             if word != 0 {
                 let bit_pos = word.trailing_zeros() as usize;
                 let object_index = word_idx * 64 + bit_pos;
 
-                if object_index >= Self::MAX_OBJECTS {
+                if object_index >= object_count {
                     continue;
                 }
 
-                self.free_bitmap[word_idx] &= !(1u64 << bit_pos);
+                header.free_bitmap[word_idx] &= !(1u64 << bit_pos);
+                header.free_count -= 1;
                 return Some(object_index);
             }
         }
         None
     }
 
-    /// Deallocate one object by index
     pub fn dealloc_object(&mut self, object_index: usize) {
-        if object_index < Self::MAX_OBJECTS {
+        let header = self.header_mut();
+        if object_index < header.object_count as usize {
             let word_idx = object_index / 64;
             let bit_idx = object_index % 64;
-            self.free_bitmap[word_idx] |= 1u64 << bit_idx;
+            let mask = 1u64 << bit_idx;
+            let was_free = (header.free_bitmap[word_idx] & mask) != 0;
+            header.free_bitmap[word_idx] |= mask;
+            if !was_free {
+                header.free_count = header.free_count.saturating_add(1);
+            }
         }
     }
 
-    /// Get object physical address
     pub fn object_addr(&self, object_index: usize) -> usize {
-        self.addr + object_index * self.size_class.size()
+        self.object_base() + object_index * self.size_class.size()
     }
 
-    /// Get object index from physical address
     pub fn object_index_from_addr(&self, obj_addr: usize) -> Option<usize> {
-        if obj_addr < self.addr {
+        let base = self.object_base();
+        if obj_addr < base {
             return None;
         }
 
-        let offset = obj_addr - self.addr;
+        let offset = obj_addr - base;
         if offset % self.size_class.size() != 0 {
             error!("Invalid object address: {:x}", obj_addr);
             return None;
@@ -94,62 +177,93 @@ impl SlabNode {
 
         let object_index = offset / self.size_class.size();
 
-        if object_index < Self::MAX_OBJECTS {
+        if object_index < self.header().object_count as usize {
             Some(object_index)
         } else {
             None
         }
     }
 
-    /// Calculate required page count
     pub fn page_count(&self, page_size: usize) -> usize {
         let object_size = self.size_class.size();
         let bytes_needed = Self::MAX_OBJECTS * object_size;
         (bytes_needed + page_size - 1) / page_size
+    }
+
+    pub fn prev(&self) -> Option<usize> {
+        let prev = self.header().prev;
+        if prev == 0 { None } else { Some(prev) }
+    }
+
+    pub fn next(&self) -> Option<usize> {
+        let next = self.header().next;
+        if next == 0 { None } else { Some(next) }
+    }
+
+    pub fn set_prev(&mut self, prev: Option<usize>) {
+        self.header_mut().prev = prev.unwrap_or(0);
+    }
+
+    pub fn set_next(&mut self, next: Option<usize>) {
+        self.header_mut().next = next.unwrap_or(0);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::alloc::{alloc, dealloc};
+    use core::alloc::Layout;
 
     #[test]
     fn test_slab_node() {
-        let mut node = SlabNode::new(0x1000, SizeClass::Bytes64);
+        let mut node = SlabNode::new(0, SizeClass::Bytes64);
+        let slab_pages = node.page_count(4096);
+        let slab_bytes = slab_pages * 4096;
+        let layout = Layout::from_size_align(slab_bytes, slab_bytes).unwrap();
+        let base = unsafe { alloc(layout) } as usize;
+        assert_ne!(base, 0);
+        node.addr = base;
+        node.init_header(slab_bytes);
 
         assert!(node.is_empty());
         assert!(!node.is_full());
-        assert_eq!(node.free_count(), 512);
+        assert!(node.free_count() <= 512);
         assert_eq!(node.in_use(), 0);
 
         // Test allocation
         let obj_idx = node.alloc_object().unwrap();
-        assert_eq!(obj_idx, 0);
-        assert_eq!(node.object_addr(obj_idx), 0x1000);
+        assert_eq!(node.object_addr(obj_idx), node.object_base());
         assert_eq!(node.in_use(), 1);
-        assert_eq!(node.free_count(), 511);
+        assert_eq!(node.free_count(), (node.header().object_count as u32).saturating_sub(1));
 
         // Test deallocation
         node.dealloc_object(obj_idx);
         assert!(node.is_empty());
         assert_eq!(node.in_use(), 0);
-        assert_eq!(node.free_count(), 512);
+        assert_eq!(node.free_count(), node.header().object_count as u32);
+
+        unsafe { dealloc(base as *mut u8, layout) };
     }
 
     #[test]
     fn test_object_index_from_addr() {
-        let node = SlabNode::new(0x1000, SizeClass::Bytes64);
+        let mut node = SlabNode::new(0, SizeClass::Bytes64);
+        let slab_pages = node.page_count(4096);
+        let slab_bytes = slab_pages * 4096;
+        let layout = Layout::from_size_align(slab_bytes, slab_bytes).unwrap();
+        let base = unsafe { alloc(layout) } as usize;
+        assert_ne!(base, 0);
+        node.addr = base;
+        node.init_header(slab_bytes);
 
-        assert_eq!(node.object_index_from_addr(0x1000), Some(0));
-        assert_eq!(node.object_index_from_addr(0x1000 + 64), Some(1));
-        assert_eq!(
-            node.object_index_from_addr(0x1000 + 63),
-            None // Not aligned
-        );
-        assert_eq!(
-            node.object_index_from_addr(0x1000 + 512 * 64),
-            None // Out of range
-        );
+        let obj0 = node.object_addr(0);
+        assert_eq!(node.object_index_from_addr(obj0), Some(0));
+        assert_eq!(node.object_index_from_addr(obj0 + 64), Some(1));
+        assert_eq!(node.object_index_from_addr(obj0 + 63), None);
+        assert_eq!(node.object_index_from_addr(obj0 + slab_bytes), None);
+
+        unsafe { dealloc(base as *mut u8, layout) };
     }
 
     #[test]
