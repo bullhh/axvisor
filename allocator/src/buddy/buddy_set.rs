@@ -330,6 +330,7 @@ impl<const PAGE_SIZE: usize> BuddySet<PAGE_SIZE> {
     }
 
     /// Get statistics for this zone
+    #[cfg(feature = "tracking")]
     pub fn get_stats(&self) -> super::stats::BuddyStats {
         let mut stats = super::stats::BuddyStats::new();
         stats.total_pages = self.total_pages;

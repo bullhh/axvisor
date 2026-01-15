@@ -315,8 +315,14 @@ impl<const PAGE_SIZE: usize> CompositePageAllocator<PAGE_SIZE> {
     /// Print detailed statistics when allocation fails.
     ///
     /// This function delegates to buddy allocator's detailed statistics reporter.
+    #[cfg(feature = "tracking")]
     fn print_alloc_failure_stats(&self, num_pages: usize, alignment: usize) {
         self.buddy.print_alloc_failure_stats(num_pages, alignment);
+    }
+
+    #[cfg(not(feature = "tracking"))]
+    fn print_alloc_failure_stats(&self, _num_pages: usize, _alignment: usize) {
+        // No-op when tracking is disabled
     }
 }
 
@@ -415,6 +421,7 @@ impl<const PAGE_SIZE: usize> PageAllocator for CompositePageAllocator<PAGE_SIZE>
 
 impl<const PAGE_SIZE: usize> CompositePageAllocator<PAGE_SIZE> {
     /// Get buddy allocator statistics
+    #[cfg(feature = "tracking")]
     pub fn get_buddy_stats(&self) -> crate::buddy::BuddyStats {
         self.buddy.get_stats()
     }

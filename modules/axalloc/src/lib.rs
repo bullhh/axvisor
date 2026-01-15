@@ -175,12 +175,14 @@ impl GlobalAllocator {
     }
 
     /// Returns the number of allocated bytes in the byte allocator.
+    #[cfg(feature = "tracking")]
     pub fn used_bytes(&self) -> usize {
         let stats = self.inner.get_stats();
         stats.heap_bytes + stats.slab_bytes
     }
 
     /// Returns the number of available bytes in the byte allocator.
+    #[cfg(feature = "tracking")]
     pub fn available_bytes(&self) -> usize {
         // The new allocator doesn't have this exact method, so we approximate
         let stats = self.inner.get_stats();
@@ -188,15 +190,41 @@ impl GlobalAllocator {
     }
 
     /// Returns the number of allocated pages in the page allocator.
+    #[cfg(feature = "tracking")]
     pub fn used_pages(&self) -> usize {
         let stats = self.inner.get_stats();
         stats.used_pages
     }
 
     /// Returns the number of available pages in the page allocator.
+    #[cfg(feature = "tracking")]
     pub fn available_pages(&self) -> usize {
         let stats = self.inner.get_stats();
         stats.free_pages
+    }
+
+    /// Returns the number of allocated bytes in the byte allocator.
+    #[cfg(not(feature = "tracking"))]
+    pub fn used_bytes(&self) -> usize {
+        0
+    }
+
+    /// Returns the number of available bytes in the byte allocator.
+    #[cfg(not(feature = "tracking"))]
+    pub fn available_bytes(&self) -> usize {
+        0
+    }
+
+    /// Returns the number of allocated pages in the page allocator.
+    #[cfg(not(feature = "tracking"))]
+    pub fn used_pages(&self) -> usize {
+        0
+    }
+
+    /// Returns the number of available pages in the page allocator.
+    #[cfg(not(feature = "tracking"))]
+    pub fn available_pages(&self) -> usize {
+        0
     }
 
     /// Returns the usage statistics of the allocator.

@@ -17,4 +17,7 @@ pub use buddy_block::{BuddyBlock, ZoneInfo, MAX_ZONES};
 pub use buddy_set::BuddySet;
 pub use global_node_pool::{GlobalNodePool, ListNode, GLOBAL_TOTAL_NODES};
 pub use pooled_list::PooledLinkedList;
+#[cfg(feature = "tracking")]
 pub use stats::{BuddyStats, DEFAULT_MAX_ORDER};
+#[cfg(not(feature = "tracking"))]
+pub use stats::DEFAULT_MAX_ORDER;

@@ -6,7 +6,7 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
-use axvisor_allocator::buddy::BuddySet;
+use buddy_slab_allocator::buddy::BuddySet;
 
 /// Test basic list allocation when order 0 exceeds 64 blocks
 #[test]
