@@ -197,6 +197,58 @@ impl PooledLinkedList {
             return false;
         }
 
+        self.remove_with_prev_impl(pool, node_idx, prev_idx)
+    }
+
+    /// Remove a node using known prev_idx (O(1) operation)
+    ///
+    /// This is used when we already know the previous node index from find_by_addr(),
+    /// avoiding a second traversal of the list.
+    pub fn remove_with_prev(
+        &mut self,
+        pool: &mut GlobalNodePool,
+        node_idx: usize,
+        prev_idx: Option<usize>,
+    ) -> bool {
+        // Verify the node exists
+        if pool.get_node(node_idx).is_none() {
+            warn!("Invalid node index {} for remove_with_prev", node_idx);
+            return false;
+        }
+
+        // Verify prev_idx leads to node_idx if provided
+        if let Some(prev) = prev_idx {
+            if let Some(prev_node) = pool.get_node(prev) {
+                if prev_node.next != Some(node_idx) {
+                    warn!(
+                        "prev_idx {} does not point to node_idx {}",
+                        prev, node_idx
+                    );
+                    return false;
+                }
+            } else {
+                warn!("Invalid prev_idx {}", prev);
+                return false;
+            }
+        } else if self.head != Some(node_idx) {
+            // prev_idx is None means node should be head
+            warn!(
+                "prev_idx is None but node_idx {} is not head",
+                node_idx
+            );
+            return false;
+        }
+
+        self.remove_with_prev_impl(pool, node_idx, prev_idx)
+    }
+
+    /// Internal implementation of remove with known prev_idx
+    fn remove_with_prev_impl(
+        &mut self,
+        pool: &mut GlobalNodePool,
+        node_idx: usize,
+        prev_idx: Option<usize>,
+    ) -> bool {
         // Get the node's next pointer before deallocating
         let next_idx = pool.get_node(node_idx).and_then(|n| n.next);
 

@@ -1,49 +1,4 @@
 //! Page allocator with contiguous block combination support.
-//!
-//! This module implements a page allocator that guarantees contiguous physical memory
-//! allocations. It uses a two-tier strategy:
-//! 1. **Standard allocation**: First attempt to allocate using the buddy allocator
-//! 2. **Backward decomposition overflow**: If buddy allocates more than requested,
-//!    use backward decomposition to return excess memory back to buddy system
-//! 3. **Contiguous block combination**: If standard allocation fails, try to find
-//!    contiguous small blocks that can satisfy the request
-//!
-//! # Example
-//!
-//! ```ignore
-//! // Request 1536 pages (6MB, not a power of 2)
-//! // Buddy allocates 2048 pages (8MB, Order 11)
-//! // Page allocator uses backward decomposition:
-//! //   - 1024 pages -> user (1024 <= 1536)
-//! //   - 512 pages -> user (1024+512=1536 == 1536)
-//! //   - Remaining 512 pages -> returned to buddy
-//! // User receives exactly 1536 pages
-//! ```
-//!
-//! # Backward Decomposition Strategy
-//!
-//! The buddy system always allocates power-of-2 sized blocks. When a user requests
-//! a non-power-of-2 amount, we use backward decomposition:
-//!
-//! 1. Allocate next power-of-2 from buddy system (e.g., 2048 pages for 1536 request)
-//! 2. The user gets the first `num_pages` pages (e.g., 1536 pages)
-//! 3. Return the excess pages (e.g., 512 pages) back to buddy system
-//!
-//! # Why Backward Decomposition?
-//!
-//! We return excess memory by decomposing from the end (back to front):
-//! - Start from end_addr = base_addr + buddy_pages * PAGE_SIZE (aligned)
-//! - Decompose excess into power-of-2 chunks from back to front
-//! - Each chunk is guaranteed to be aligned because we start from aligned boundary
-//!
-//! Example with 2048 pages allocated, 1537 requested (511 excess):
-//! - End addr: 0x80080000 (2048 pages aligned)
-//! - Release 256 pages at 0x80040000 (aligned to 256)
-//! - Release 128 pages at 0x80020000 (aligned to 128)
-//! - Release 64 pages at 0x80010000 (aligned to 64)
-//! - ... and so on
-//!
-//! All chunks are properly aligned!
 
 use crate::buddy::{BuddyPageAllocator, DEFAULT_MAX_ORDER};
 use crate::{AllocError, AllocResult, BaseAllocator, PageAllocator};
@@ -54,19 +9,7 @@ use log::{debug, info, warn};
 /// Maximum number of buddy blocks in a single contiguous allocation
 const MAX_PARTS_PER_ALLOC: usize = 8;
 
-/// Page allocator with overflow handling and contiguous block combination support.
-///
-/// This allocator extends the buddy system to:
-/// 1. **Handle overflow**: Return excess memory allocated by buddy back to system
-/// 2. **Combine contiguous blocks**: When standard allocation fails, try to find
-///    contiguous small blocks that can satisfy the request
-///
-/// # Why Not Directly Modifying BuddyPageAllocator?
-///
-/// - **Separation of concerns**: Buddy allocator should focus on core buddy algorithm
-/// - **Purity**: Buddy system should maintain standard behavior (always allocates power-of-2)
-/// - **Flexibility**: Different page allocators can have different overflow strategies
-/// - **Maintainability**: Overflow logic is independent and easier to test at this layer
+
 pub struct CompositePageAllocator<const PAGE_SIZE: usize = { crate::DEFAULT_PAGE_SIZE }> {
     /// Underlying buddy allocator for standard allocations
     buddy: BuddyPageAllocator<PAGE_SIZE>,
@@ -271,11 +214,6 @@ impl<const PAGE_SIZE: usize> PageAllocator for CompositePageAllocator<PAGE_SIZE>
         Ok(base_addr)
     }
 
-    /// Deallocate memory pages.
-    ///
-    /// Handles both power-of-2 and non-power-of-2 allocations.
-    /// - Power-of-2: Delegates directly to buddy system
-    /// - Non-power-of-2: Decomposes into power-of-2 chunks, then delegates to buddy
     fn dealloc_pages(&mut self, pos: usize, num_pages: usize) {
         debug!("Deallocating pages at {:#x}, count={}", pos, num_pages);
 

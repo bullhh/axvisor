@@ -80,6 +80,7 @@ impl<const PAGE_SIZE: usize> BuddySet<PAGE_SIZE> {
     }
 
     /// Remove a block from its list
+    #[allow(dead_code)]
     fn remove_block_from_order(
         &mut self,
         pool: &mut GlobalNodePool,
@@ -288,7 +289,7 @@ impl<const PAGE_SIZE: usize> BuddySet<PAGE_SIZE> {
             }
 
             // Try to find buddy in free list
-            if let Some((node_idx, _)) = self.find_block_in_order(pool, order, buddy_addr) {
+            if let Some((node_idx, prev_idx)) = self.find_block_in_order(pool, order, buddy_addr) {
                 // Verify buddy has correct order and address
                 let node = pool.get_node(node_idx).unwrap();
                 if node.data.order != order || node.data.addr != buddy_addr {
@@ -299,8 +300,8 @@ impl<const PAGE_SIZE: usize> BuddySet<PAGE_SIZE> {
                     break;
                 }
 
-                // Remove buddy from free list
-                self.remove_block_from_order(pool, order, node_idx);
+                // Remove buddy from free list using prev_idx for O(1) deletion
+                self.free_lists[order].remove_with_prev(pool, node_idx, prev_idx);
 
                 // Merge: use the aligned address (lower address)
                 current_pfn = current_pfn & buddy_pfn;
@@ -454,7 +455,7 @@ impl<const PAGE_SIZE: usize> BuddySet<PAGE_SIZE> {
             let block_addr = block_pfn * PAGE_SIZE;
 
             // Check if this order can contain the request
-            if let Some((node_idx, _)) = self.find_block_in_order(pool, order, block_addr) {
+            if let Some((node_idx, prev_idx)) = self.find_block_in_order(pool, order, block_addr) {
                 // Verify the block is indeed in the free list and capture its data
                 let node_data = {
                     let node = pool.get_node(node_idx).unwrap();
@@ -464,8 +465,8 @@ impl<const PAGE_SIZE: usize> BuddySet<PAGE_SIZE> {
                     node.data
                 };
 
-                // Remove this block from free list
-                self.remove_block_from_order(pool, order, node_idx);
+                // Remove this block from free list using prev_idx for O(1) deletion
+                self.free_lists[order].remove_with_prev(pool, node_idx, prev_idx);
 
                 // Now we have a larger block, need to split it
                 // to keep only the part that covers [base, base + size)
