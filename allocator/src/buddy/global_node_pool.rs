@@ -23,7 +23,7 @@ pub struct ListNode<T> {
 pub const GLOBAL_TOTAL_NODES: usize = 512;
 
 #[cfg(not(test))]
-pub const GLOBAL_TOTAL_NODES: usize = 8192;
+pub const GLOBAL_TOTAL_NODES: usize = 819200;
 
 /// Global node pool - all zones and orders share nodes from this pool
 pub struct GlobalNodePool {

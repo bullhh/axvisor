@@ -357,7 +357,7 @@ impl<const PAGE_SIZE: usize> PageAllocator for CompositePageAllocator<PAGE_SIZE>
         }
 
         // Backward decomposition: decompose excess memory back to buddy
-        self.backward_decompose_overflow(base_addr, num_pages, buddy_pages)?;
+        // self.backward_decompose_overflow(base_addr, num_pages, buddy_pages)?;
 
         Ok(base_addr)
     }
@@ -379,8 +379,9 @@ impl<const PAGE_SIZE: usize> PageAllocator for CompositePageAllocator<PAGE_SIZE>
             // Power-of-2: can deallocate directly to buddy
             self.buddy.dealloc_pages(pos, num_pages);
         } else {
+            self.buddy.dealloc_pages(pos, num_pages.next_power_of_two());
             // Non-power-of-2: decompose into power-of-2 chunks
-            self.dealloc_non_power_of_two(pos, num_pages);
+            // self.dealloc_non_power_of_two(pos,num_pages);
         }
     }
 

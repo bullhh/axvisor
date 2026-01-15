@@ -588,7 +588,7 @@ pub mod performance_tests {
         info!("  说明: 频繁分配/释放相同大小的小对象，Slab allocator 有显著优势\n");
 
         // 测试多种常见小对象大小
-        let test_sizes = [32, 64, 128, 256, 512, 1024];
+        let test_sizes = [32, 64, 128, 256, 512, 1024, 4096,40960];
 
         for size in test_sizes {
             let iterations = 50000;
