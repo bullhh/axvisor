@@ -165,6 +165,9 @@ impl<const PAGE_SIZE: usize> BuddyPageAllocator<PAGE_SIZE> {
         self.zones[zone_id].init(&mut self.global_node_pool, aligned_start, aligned_size);
         self.num_zones += 1;
 
+        // Print all zone information after successfully adding a new memory region
+        self.print_zone_info();
+
         Ok(())
     }
 
@@ -209,6 +212,43 @@ impl<const PAGE_SIZE: usize> BuddyPageAllocator<PAGE_SIZE> {
             num_pages,
             alignment,
         );
+    }
+
+    /// Print all zone information and block distribution
+    pub fn print_zone_info(&self) {
+        info!("========== Buddy Allocator Zones Info ==========");
+        info!("Total zones: {}", self.num_zones);
+        info!("Page size: {:#x} ({})", PAGE_SIZE, PAGE_SIZE);
+        info!("");
+
+        for i in 0..self.num_zones {
+            let zone = &self.zones[i];
+            let zone_info = zone.zone_info();
+            info!("Zone {}:", i);
+            info!("  Address range: [{:#x}, {:#x})", zone_info.start_addr, zone_info.end_addr);
+            info!("  Total pages: {}", zone_info.total_pages);
+            info!("  Total size: {:#x} ({} MB)",
+                  zone_info.total_pages * PAGE_SIZE,
+                  (zone_info.total_pages * PAGE_SIZE) / (1024 * 1024));
+            info!("  Free blocks distribution:");
+
+            // Print block distribution for each order
+            for order in 0..=zone.max_order() {
+                let block_count = zone.get_order_block_count(order);
+                if block_count > 0 {
+                    let block_size = (1 << order) * PAGE_SIZE;
+                    info!("    Order {}: {} blocks (size {} bytes each, total {:#x})",
+                          order, block_count, block_size, block_count * block_size);
+                }
+            }
+            info!("");
+        }
+
+        info!("Global node pool stats:");
+        let pool_stats = self.global_node_pool.get_stats();
+        info!("  Total allocations: {}", pool_stats.total_allocations);
+        info!("  Free nodes: {}", pool_stats.free_nodes);
+        info!("==============================================");
     }
 
     #[cfg(not(feature = "tracking"))]
