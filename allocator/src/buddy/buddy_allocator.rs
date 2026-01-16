@@ -15,7 +15,7 @@ use crate::{AllocError, AllocResult, BaseAllocator, PageAllocator};
 use log::{debug, error, info, warn};
 
 use super::{
-    buddy_block::MAX_ZONES,
+    buddy_block::{MAX_ZONES, ZoneInfo},
     buddy_set::BuddySet,
 };
 

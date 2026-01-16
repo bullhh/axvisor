@@ -146,7 +146,10 @@ impl<const PAGE_SIZE: usize> BuddySet<PAGE_SIZE> {
         let metadata_ptr = aligned_base as *mut u64;
         let mut offset = 0;
 
-        let max_order = (self.total_pages.ilog2() as usize).min(DEFAULT_MAX_ORDER);
+        // Calculate max order based on total pages
+        // We use DEFAULT_MAX_ORDER as the limit to allow merging up to that level
+        // even if the zone itself is smaller than 2^DEFAULT_MAX_ORDER
+        let max_order = DEFAULT_MAX_ORDER;
 
         for order in 0..=max_order {
             let blocks = (self.total_pages + (1 << order) - 1) >> order;
@@ -172,44 +175,16 @@ impl<const PAGE_SIZE: usize> BuddySet<PAGE_SIZE> {
         }
 
         // Release pages to build initial free lists
-        // Use Linux-style initialization: add largest possible aligned blocks first
+        // Use Linux-style initialization: free pages one by one, let them merge automatically
         info!(
             "zone {}: building free lists for {} pages, usable_start={:#x}",
             self.zone_id, self.total_pages, self.usable_start
         );
 
-        let mut pfn = 0;
-        while pfn < self.total_pages {
-            // Find the largest order that:
-            // 1. The remaining pages can accommodate
-            // 2. The starting pfn is properly aligned for
-            // 3. The physical address is properly aligned for the order
-            let mut order = 0;
-            while order <= max_order {
-                let size = 1 << order;
-                let phys_addr = self.usable_start + pfn * PAGE_SIZE;
-                let align_requirement = size * PAGE_SIZE;
-                
-                // Check if we have enough pages, pfn is aligned, AND physical address is aligned
-                if pfn + size <= self.total_pages 
-                    && (pfn & (size - 1)) == 0 
-                    && (phys_addr & (align_requirement - 1)) == 0 {
-                    order += 1;
-                } else {
-                    break;
-                }
-            }
-            order = order.saturating_sub(1);
-
-            let block_size = 1 << order;
-            let block_addr = self.usable_start + pfn * PAGE_SIZE;
-
-            // Mark this block as free
-            let block_idx = pfn >> order;
-            self.set_bit(order, block_idx);
-            self.free_blocks_per_order[order] += 1;
-
-            pfn += block_size;
+        // Free each page individually and let the dealloc_pages logic handle merging
+        for pfn in 0..self.total_pages {
+            let page_addr = self.usable_start + pfn * PAGE_SIZE;
+            self.dealloc_pages(page_addr, 1);
         }
 
         // Print final free block statistics
@@ -278,16 +253,18 @@ impl<const PAGE_SIZE: usize> BuddySet<PAGE_SIZE> {
     /// Convert address to block index for a given order
     #[inline]
     fn addr_to_block_idx(&self, addr: usize, order: usize) -> usize {
-        let offset = addr - self.usable_start;
-        let pfn = offset / PAGE_SIZE;
-        pfn >> order
+        let pfn = addr / PAGE_SIZE;
+        let base_pfn = self.usable_start / PAGE_SIZE;
+        let relative_pfn = pfn - base_pfn;
+        relative_pfn >> order
     }
 
     /// Convert block index to address for a given order
     #[inline]
     fn block_idx_to_addr(&self, block_idx: usize, order: usize) -> usize {
-        let pfn = block_idx << order;
-        self.usable_start + pfn * PAGE_SIZE
+        let base_pfn = self.usable_start / PAGE_SIZE;
+        let pfn = base_pfn + (block_idx << order);
+        pfn * PAGE_SIZE
     }
 
     /// Allocate pages using buddy system
@@ -377,13 +354,12 @@ impl<const PAGE_SIZE: usize> BuddySet<PAGE_SIZE> {
     }
 
     /// Deallocate pages back to buddy system with automatic merging
+    /// This is the Linux __free_one_page equivalent for bitmap-based buddy system
     pub fn dealloc_pages(&mut self, addr: usize, num_pages: usize) {
         if num_pages == 0 {
             warn!("zone {}: Trying to deallocate 0 pages", self.zone_id);
             return;
         }
-
-
 
         // Validate address
         if addr < self.usable_start || addr >= self.end_addr {
@@ -412,9 +388,8 @@ impl<const PAGE_SIZE: usize> BuddySet<PAGE_SIZE> {
             return;
         }
 
-        // Calculate PFN
-        let offset = addr - self.usable_start;
-        let pfn = offset / PAGE_SIZE;
+        // Calculate absolute PFN (Page Frame Number)
+        let pfn = addr / PAGE_SIZE;
 
         // Check alignment
         if pfn & ((1 << order) - 1) != 0 {
@@ -425,43 +400,54 @@ impl<const PAGE_SIZE: usize> BuddySet<PAGE_SIZE> {
             return;
         }
 
+        // Check page alignment
+        if addr & (PAGE_SIZE - 1) != 0 {
+            error!(
+                "zone {}: Attempt to free page at non-page-aligned address {:#x}",
+                self.zone_id, addr
+            );
+            return;
+        }
+
         let mut current_pfn = pfn;
 
-        // Try to merge with buddy blocks
+        // Try to merge with buddy blocks (Linux-style)
         while order < self.max_order() {
+            // Calculate buddy PFN using XOR operation (same as Linux kernel)
             let buddy_pfn = current_pfn ^ (1 << order);
-            let buddy_addr = self.usable_start + buddy_pfn * PAGE_SIZE;
 
-            // Check if buddy is within the zone
+            // Verify buddy is within the zone
+            let buddy_addr = buddy_pfn * PAGE_SIZE;
+
             if buddy_addr < self.usable_start || buddy_addr >= self.end_addr {
                 break;
             }
 
-            let buddy_idx = buddy_pfn >> order;
-            
-            // Check if buddy is free
-            if self.is_bit_set(order, buddy_idx) {
-       
+            // Convert to block index for bitmap check
+            let buddy_idx = self.addr_to_block_idx(buddy_addr, order);
 
-                // Remove buddy from free list
-                self.clear_bit(order, buddy_idx);
-                self.free_blocks_per_order[order] -= 1;
-
-                // Merge: use the lower address
-                current_pfn = current_pfn & buddy_pfn;
-                order += 1;
-            } else {
-                // Buddy not free, cannot merge
+            // Check if buddy is free (set in bitmap)
+            if !self.is_bit_set(order, buddy_idx) {
+                // Buddy not free, cannot merge further
                 break;
             }
+
+            // Remove buddy from free list
+            self.clear_bit(order, buddy_idx);
+            self.free_blocks_per_order[order] -= 1;
+
+            // Merge: use the aligned address (lower address)
+            current_pfn = current_pfn & buddy_pfn;
+
+            // Move to next order
+            order += 1;
         }
 
         // Add the final merged block to free list
-        let final_idx = current_pfn >> order;
+        let final_addr = current_pfn * PAGE_SIZE;
+        let final_idx = self.addr_to_block_idx(final_addr, order);
         self.set_bit(order, final_idx);
         self.free_blocks_per_order[order] += 1;
-
-   
     }
 
     /// Get statistics for this zone
@@ -527,8 +513,7 @@ impl<const PAGE_SIZE: usize> BuddySet<PAGE_SIZE> {
         }
 
         let required_order = num_pages.trailing_zeros() as usize;
-        let offset = base - self.usable_start;
-        let pfn = offset / PAGE_SIZE;
+        let pfn = base / PAGE_SIZE;
         
         // Check alignment
         if pfn & ((1 << required_order) - 1) != 0 {
