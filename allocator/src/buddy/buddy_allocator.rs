@@ -20,6 +20,10 @@ use super::{
     global_node_pool::GlobalNodePool,
 };
 
+const NODE_POOL_PAGES: usize = 10;
+const NODE_POOL_LOW_WATER_NODES: usize = 128;
+const NODE_POOL_EXPAND_PAGES: usize = 5;
+
 #[cfg(feature = "tracking")]
 use super::stats::{BuddyStats, MemoryStatsReporter};
 
@@ -64,13 +68,21 @@ impl<const PAGE_SIZE: usize> BuddyPageAllocator<PAGE_SIZE> {
             panic!("Cannot bootstrap: maximum zones reached");
         }
 
-        // Initialize global node pool if not already initialized
-        if self.global_node_pool.get_stats().total_allocations == 0 {
-            self.global_node_pool.init();
+        // Reserve a small region at the beginning for the global node pool
+        let node_region_size = NODE_POOL_PAGES * PAGE_SIZE;
+        if size <= node_region_size {
+            panic!("Cannot bootstrap: region too small for node pool");
         }
+        let node_region_start = base_addr;
 
-        self.zones[0] = BuddySet::new(base_addr, size, 0);
-        self.zones[0].init(&mut self.global_node_pool, base_addr, size);
+        self.global_node_pool
+            .init(node_region_start, node_region_size);
+
+        let zone_base = base_addr + node_region_size;
+        let zone_size = size - node_region_size;
+
+        self.zones[0] = BuddySet::new(zone_base, zone_size, 0);
+        self.zones[0].init(&mut self.global_node_pool, zone_base, zone_size);
         self.num_zones = 1;
 
         #[cfg(feature = "tracking")]
@@ -116,6 +128,43 @@ impl<const PAGE_SIZE: usize> BuddyPageAllocator<PAGE_SIZE> {
         }
 
         self.stats = total_stats;
+    }
+
+    /// Ensure the global node pool has enough free nodes.
+    ///
+    /// When the number of free nodes falls below a low-water mark,
+    /// reserve a few pages from zone 0 and add them as a new node region.
+    fn maybe_expand_node_pool(&mut self) {
+        let free_nodes = self.global_node_pool.free_node_count();
+        if free_nodes >= NODE_POOL_LOW_WATER_NODES {
+            return;
+        }
+        if self.num_zones == 0 {
+            return;
+        }
+
+        let expand_pages = NODE_POOL_EXPAND_PAGES;
+        let expand_size = expand_pages * PAGE_SIZE;
+
+        match self.zones[0].alloc_pages(&mut self.global_node_pool, expand_pages, PAGE_SIZE) {
+            Ok(addr) => {
+                #[cfg(feature = "log")]
+                info!(
+                    "buddy allocator: expanding node pool: free_nodes={} region=[{:#x}, {:#x})",
+                    free_nodes,
+                    addr,
+                    addr + expand_size
+                );
+                self.global_node_pool.add_region(addr, expand_size);
+            }
+            Err(_) => {
+                #[cfg(feature = "log")]
+                warn!(
+                    "buddy allocator: failed to expand node pool at low water: free_nodes={}",
+                    free_nodes
+                );
+            }
+        }
     }
 
     /// Add a new memory region as a new zone
@@ -290,6 +339,9 @@ impl<const PAGE_SIZE: usize> PageAllocator for BuddyPageAllocator<PAGE_SIZE> {
     const PAGE_SIZE: usize = PAGE_SIZE;
 
     fn alloc_pages(&mut self, num_pages: usize, alignment: usize) -> AllocResult<usize> {
+        // Try to expand node pool if we are close to exhaustion
+        self.maybe_expand_node_pool();
+
         for i in 0..self.num_zones {
             match self.zones[i].alloc_pages(&mut self.global_node_pool, num_pages, alignment) {
                 Ok(addr) => {
@@ -311,6 +363,7 @@ impl<const PAGE_SIZE: usize> PageAllocator for BuddyPageAllocator<PAGE_SIZE> {
     }
 
     fn dealloc_pages(&mut self, pos: usize, num_pages: usize) {
+        self.maybe_expand_node_pool();
         if let Some(zone_idx) = self.find_zone_for_addr(pos) {
             self.zones[zone_idx].dealloc_pages(&mut self.global_node_pool, pos, num_pages);
             #[cfg(feature = "tracking")]
@@ -329,6 +382,9 @@ impl<const PAGE_SIZE: usize> PageAllocator for BuddyPageAllocator<PAGE_SIZE> {
         num_pages: usize,
         alignment: usize,
     ) -> AllocResult<usize> {
+        // Try to expand node pool if we are close to exhaustion
+        self.maybe_expand_node_pool();
+
         if let Some(zone_idx) = self.find_zone_for_addr(base) {
             match self.zones[zone_idx].alloc_pages_at(
                 &mut self.global_node_pool,

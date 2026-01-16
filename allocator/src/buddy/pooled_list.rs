@@ -324,19 +324,28 @@ impl<'a> Iterator for PooledListIter<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::global_node_pool::GLOBAL_TOTAL_NODES;
     use super::*;
+    use crate::buddy::ListNode;
+
+    const TEST_NODE_COUNT: usize = 512;
 
     #[test]
     fn test_pooled_list_basic() {
         let mut pool: GlobalNodePool = GlobalNodePool::new();
-        pool.init();
+        let mut backing = [ListNode {
+            data: BuddyBlock { order: 0, addr: 0 },
+            next: None,
+        }; TEST_NODE_COUNT];
+
+        let region_start = backing.as_mut_ptr() as usize;
+        let region_size = core::mem::size_of_val(&backing);
+        pool.init(region_start, region_size);
 
         let mut list: PooledLinkedList = PooledLinkedList::new();
 
         assert!(list.is_empty());
         assert_eq!(list.len(), 0);
-        assert_eq!(pool.free_node_count(), GLOBAL_TOTAL_NODES);
+        assert_eq!(pool.free_node_count(), TEST_NODE_COUNT);
 
         list.insert_sorted(
             &mut pool,
@@ -361,7 +370,7 @@ mod tests {
         );
 
         assert_eq!(list.len(), 3);
-        assert_eq!(pool.free_node_count(), GLOBAL_TOTAL_NODES - 3);
+        assert_eq!(pool.free_node_count(), TEST_NODE_COUNT - 3);
 
         assert_eq!(
             list.pop_front(&mut pool),
@@ -378,18 +387,25 @@ mod tests {
             })
         );
         assert_eq!(list.len(), 1);
-        assert_eq!(pool.free_node_count(), GLOBAL_TOTAL_NODES - 1);
+        assert_eq!(pool.free_node_count(), TEST_NODE_COUNT - 1);
 
         // Clear remaining
         list.clear(&mut pool);
         assert!(list.is_empty());
-        assert_eq!(pool.free_node_count(), GLOBAL_TOTAL_NODES);
+        assert_eq!(pool.free_node_count(), TEST_NODE_COUNT);
     }
 
     #[test]
     fn test_insert_sorted() {
         let mut pool: GlobalNodePool = GlobalNodePool::new();
-        pool.init();
+        let mut backing = [ListNode {
+            data: BuddyBlock { order: 0, addr: 0 },
+            next: None,
+        }; TEST_NODE_COUNT];
+
+        let region_start = backing.as_mut_ptr() as usize;
+        let region_size = core::mem::size_of_val(&backing);
+        pool.init(region_start, region_size);
 
         let mut list: PooledLinkedList = PooledLinkedList::new();
 
@@ -433,7 +449,14 @@ mod tests {
     #[test]
     fn test_find_and_remove() {
         let mut pool: GlobalNodePool = GlobalNodePool::new();
-        pool.init();
+        let mut backing = [ListNode {
+            data: BuddyBlock { order: 0, addr: 0 },
+            next: None,
+        }; TEST_NODE_COUNT];
+
+        let region_start = backing.as_mut_ptr() as usize;
+        let region_size = core::mem::size_of_val(&backing);
+        pool.init(region_start, region_size);
 
         let mut list: PooledLinkedList = PooledLinkedList::new();
 
@@ -463,7 +486,7 @@ mod tests {
         assert!(list.remove(&mut pool, node_idx));
 
         assert_eq!(list.len(), 2);
-        assert_eq!(pool.free_node_count(), GLOBAL_TOTAL_NODES - 2);
+        assert_eq!(pool.free_node_count(), TEST_NODE_COUNT - 2);
 
         let items: alloc::vec::Vec<_> = list.iter(&pool).collect();
         assert_eq!(items[0].addr, 0x1000);

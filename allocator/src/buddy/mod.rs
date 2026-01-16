@@ -15,7 +15,7 @@ pub mod stats;
 pub use buddy_allocator::BuddyPageAllocator;
 pub use buddy_block::{BuddyBlock, ZoneInfo, MAX_ZONES};
 pub use buddy_set::BuddySet;
-pub use global_node_pool::{GlobalNodePool, ListNode, GLOBAL_TOTAL_NODES};
+pub use global_node_pool::{GlobalNodePool, ListNode};
 pub use pooled_list::PooledLinkedList;
 #[cfg(feature = "tracking")]
 pub use stats::{BuddyStats, DEFAULT_MAX_ORDER};

@@ -6,10 +6,19 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
-use buddy_slab_allocator::buddy::{BuddySet, GlobalNodePool, DEFAULT_MAX_ORDER};
+use buddy_slab_allocator::buddy::{
+    BuddyBlock, BuddySet, GlobalNodePool, ListNode, DEFAULT_MAX_ORDER,
+};
 use kspin::SpinNoIrq;
 
 static GLOBAL_POOL: SpinNoIrq<GlobalNodePool> = SpinNoIrq::new(GlobalNodePool::new());
+
+const TEST_NODE_COUNT: usize = 512;
+
+static mut NODE_BACKING: [ListNode<BuddyBlock>; TEST_NODE_COUNT] = [ListNode {
+    data: BuddyBlock { order: 0, addr: 0 },
+    next: None,
+}; TEST_NODE_COUNT];
 
 const PAGE_SIZE: usize = 4096;
 
@@ -25,7 +34,11 @@ fn free_pages(buddy: &BuddySet<PAGE_SIZE>) -> usize {
 #[test]
 fn test_basic_list_allocation() {
     let mut pool = GLOBAL_POOL.lock();
-    pool.init();
+    unsafe {
+        let region_start = NODE_BACKING.as_mut_ptr() as usize;
+        let region_size = core::mem::size_of_val(&NODE_BACKING);
+        pool.init(region_start, region_size);
+    }
     let mut buddy: BuddySet<PAGE_SIZE> = BuddySet::new(0x1000_0000, 1024 * 4096, 0); // 4MB
     buddy.init(&mut pool, 0x1000_0000, 1024 * 4096);
 
@@ -55,7 +68,11 @@ fn test_basic_list_allocation() {
 #[test]
 fn test_multiple_orders_share_pool() {
     let mut pool = GLOBAL_POOL.lock();
-    pool.init();
+    unsafe {
+        let region_start = NODE_BACKING.as_mut_ptr() as usize;
+        let region_size = core::mem::size_of_val(&NODE_BACKING);
+        pool.init(region_start, region_size);
+    }
     let mut buddy: BuddySet<PAGE_SIZE> = BuddySet::new(0x2000_0000, 4096 * 1024, 0); // 4MB
     buddy.init(&mut pool, 0x2000_0000, 4096 * 1024);
 
@@ -97,7 +114,14 @@ fn test_multiple_orders_share_pool() {
 #[test]
 fn test_list_release_on_empty() {
     let mut pool = GlobalNodePool::new();
-    pool.init();
+    let mut backing = [ListNode {
+        data: BuddyBlock { order: 0, addr: 0 },
+        next: None,
+    }; TEST_NODE_COUNT];
+
+    let region_start = backing.as_mut_ptr() as usize;
+    let region_size = core::mem::size_of_val(&backing);
+    pool.init(region_start, region_size);
     let mut buddy: BuddySet<PAGE_SIZE> = BuddySet::new(0x3000_0000, 4096 * 1024, 0); // 4MB
     buddy.init(&mut pool, 0x3000_0000, 4096 * 1024);
 
@@ -144,7 +168,14 @@ fn test_list_release_on_empty() {
 #[test]
 fn test_stress_small_blocks() {
     let mut pool = GlobalNodePool::new();
-    pool.init();
+    let mut backing = [ListNode {
+        data: BuddyBlock { order: 0, addr: 0 },
+        next: None,
+    }; TEST_NODE_COUNT];
+
+    let region_start = backing.as_mut_ptr() as usize;
+    let region_size = core::mem::size_of_val(&backing);
+    pool.init(region_start, region_size);
     let mut buddy: BuddySet<PAGE_SIZE> = BuddySet::new(0x4000_0000, 4096 * 2048, 0); // 8MB
     buddy.init(&mut pool, 0x4000_0000, 4096 * 2048);
 
@@ -183,7 +214,14 @@ fn test_stress_small_blocks() {
 #[test]
 fn test_merging_with_multiple_lists() {
     let mut pool = GlobalNodePool::new();
-    pool.init();
+    let mut backing = [ListNode {
+        data: BuddyBlock { order: 0, addr: 0 },
+        next: None,
+    }; TEST_NODE_COUNT];
+
+    let region_start = backing.as_mut_ptr() as usize;
+    let region_size = core::mem::size_of_val(&backing);
+    pool.init(region_start, region_size);
     let mut buddy: BuddySet<PAGE_SIZE> = BuddySet::new(0x5000_0000, 4096 * 256, 0); // 1MB
     buddy.init(&mut pool, 0x5000_0000, 4096 * 256);
 
@@ -217,7 +255,14 @@ fn test_merging_with_multiple_lists() {
 #[test]
 fn test_pool_exhaustion() {
     let mut pool = GlobalNodePool::new();
-    pool.init();
+    let mut backing = [ListNode {
+        data: BuddyBlock { order: 0, addr: 0 },
+        next: None,
+    }; TEST_NODE_COUNT];
+
+    let region_start = backing.as_mut_ptr() as usize;
+    let region_size = core::mem::size_of_val(&backing);
+    pool.init(region_start, region_size);
     let mut buddy: BuddySet<PAGE_SIZE> = BuddySet::new(0x6000_0000, 4096 * 4096, 0); // 16MB
     buddy.init(&mut pool, 0x6000_0000, 4096 * 4096);
 
@@ -253,7 +298,14 @@ fn test_pool_exhaustion() {
 #[test]
 fn test_list_reuse() {
     let mut pool = GlobalNodePool::new();
-    pool.init();
+    let mut backing = [ListNode {
+        data: BuddyBlock { order: 0, addr: 0 },
+        next: None,
+    }; TEST_NODE_COUNT];
+
+    let region_start = backing.as_mut_ptr() as usize;
+    let region_size = core::mem::size_of_val(&backing);
+    pool.init(region_start, region_size);
     let mut buddy: BuddySet<PAGE_SIZE> = BuddySet::new(0x7000_0000, 4096 * 512, 0); // 2MB
     buddy.init(&mut pool, 0x7000_0000, 4096 * 512);
 
@@ -295,7 +347,14 @@ fn test_list_reuse() {
 #[test]
 fn test_fragmentation_scenarios() {
     let mut pool = GlobalNodePool::new();
-    pool.init();
+    let mut backing = [ListNode {
+        data: BuddyBlock { order: 0, addr: 0 },
+        next: None,
+    }; TEST_NODE_COUNT];
+
+    let region_start = backing.as_mut_ptr() as usize;
+    let region_size = core::mem::size_of_val(&backing);
+    pool.init(region_start, region_size);
     let mut buddy: BuddySet<PAGE_SIZE> = BuddySet::new(0x8000_0000, 4096 * 1024, 0); // 4MB
     buddy.init(&mut pool, 0x8000_0000, 4096 * 1024);
 
@@ -333,7 +392,14 @@ fn test_fragmentation_scenarios() {
 #[test]
 fn test_order_transitions() {
     let mut pool = GlobalNodePool::new();
-    pool.init();
+    let mut backing = [ListNode {
+        data: BuddyBlock { order: 0, addr: 0 },
+        next: None,
+    }; TEST_NODE_COUNT];
+
+    let region_start = backing.as_mut_ptr() as usize;
+    let region_size = core::mem::size_of_val(&backing);
+    pool.init(region_start, region_size);
     let mut buddy: BuddySet<PAGE_SIZE> = BuddySet::new(0x9000_0000, 4096 * 512, 0); // 2MB
     buddy.init(&mut pool, 0x9000_0000, 4096 * 512);
 
@@ -373,7 +439,14 @@ fn test_order_transitions() {
 #[test]
 fn test_max_order_scenarios() {
     let mut pool = GlobalNodePool::new();
-    pool.init();
+    let mut backing = [ListNode {
+        data: BuddyBlock { order: 0, addr: 0 },
+        next: None,
+    }; TEST_NODE_COUNT];
+
+    let region_start = backing.as_mut_ptr() as usize;
+    let region_size = core::mem::size_of_val(&backing);
+    pool.init(region_start, region_size);
     let mut buddy: BuddySet<PAGE_SIZE> = BuddySet::new(0xA000_0000, 4096 * 4096, 0); // 16MB
     buddy.init(&mut pool, 0xA000_0000, 4096 * 4096);
 
@@ -406,7 +479,14 @@ fn test_max_order_scenarios() {
 #[test]
 fn test_no_memory_leak() {
     let mut pool = GlobalNodePool::new();
-    pool.init();
+    let mut backing = [ListNode {
+        data: BuddyBlock { order: 0, addr: 0 },
+        next: None,
+    }; TEST_NODE_COUNT];
+
+    let region_start = backing.as_mut_ptr() as usize;
+    let region_size = core::mem::size_of_val(&backing);
+    pool.init(region_start, region_size);
     let mut buddy: BuddySet<PAGE_SIZE> = BuddySet::new(0xB000_0000, 4096 * 2048, 0); // 8MB
     buddy.init(&mut pool, 0xB000_0000, 4096 * 2048);
 
@@ -439,7 +519,14 @@ fn test_no_memory_leak() {
 #[test]
 fn test_extreme_fragmentation() {
     let mut pool = GlobalNodePool::new();
-    pool.init();
+    let mut backing = [ListNode {
+        data: BuddyBlock { order: 0, addr: 0 },
+        next: None,
+    }; TEST_NODE_COUNT];
+
+    let region_start = backing.as_mut_ptr() as usize;
+    let region_size = core::mem::size_of_val(&backing);
+    pool.init(region_start, region_size);
     let mut buddy: BuddySet<PAGE_SIZE> = BuddySet::new(0xC000_0000, 4096 * 2048, 0); // 8MB
     buddy.init(&mut pool, 0xC000_0000, 4096 * 2048);
 
