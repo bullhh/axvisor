@@ -9,11 +9,28 @@ use core::ptr::NonNull;
 #[cfg(feature = "log")]
 use log::warn;
 
-use crate::{AllocError, AllocResult, ByteAllocator};
+use crate::{AllocError, AllocResult, ByteAllocator, PageAllocator};
 
 // Re-export public types from sibling modules
 pub use super::slab_cache::SlabCache;
 pub use super::slab_node::SlabNode;
+
+/// Page allocator trait for slab allocator
+pub trait PageAllocatorForSlab {
+    fn alloc_pages(&mut self, num_pages: usize, alignment: usize) -> AllocResult<usize>;
+    fn dealloc_pages(&mut self, pos: usize, num_pages: usize);
+}
+
+/// Implementation of PageAllocatorForSlab for any PageAllocator
+impl<T: PageAllocator> PageAllocatorForSlab for T {
+    fn alloc_pages(&mut self, num_pages: usize, alignment: usize) -> AllocResult<usize> {
+        PageAllocator::alloc_pages(self, num_pages, alignment)
+    }
+
+    fn dealloc_pages(&mut self, pos: usize, num_pages: usize) {
+        PageAllocator::dealloc_pages(self, pos, num_pages);
+    }
+}
 
 /// Size classes for slab allocation
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,12 +114,6 @@ impl SizeClass {
             _ => None,
         }
     }
-}
-
-/// Page allocator trait for slab allocator
-pub trait PageAllocatorForSlab {
-    fn alloc_pages(&mut self, num_pages: usize, alignment: usize) -> AllocResult<usize>;
-    fn dealloc_pages(&mut self, pos: usize, num_pages: usize);
 }
 
 /// Slab byte allocator with pooled linked lists

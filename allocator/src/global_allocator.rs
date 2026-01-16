@@ -1,7 +1,7 @@
 //! Global allocator implementation for Axvisor.
 //!
 //! This module implements a global allocator that coordinates between
-//! buddy page allocator and slab byte allocator for optimal performance.
+//! bitmap page allocator and slab byte allocator for optimal performance.
 
 extern crate alloc;
 
@@ -10,9 +10,7 @@ use core::alloc::Layout;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-#[cfg(feature = "tracking")]
-use super::buddy::BuddyStats;
-use super::page_allocator::CompositePageAllocator;
+use super::bitmap::BitmapAllocator;
 use super::slab::{PageAllocatorForSlab, SlabByteAllocator};
 use kspin::SpinNoIrq;
 
@@ -45,9 +43,9 @@ impl Default for UsageStats {
     }
 }
 
-/// Global allocator that coordinates composite and slab allocators
+/// Global allocator that coordinates bitmap and slab allocators
 pub struct GlobalAllocator<const PAGE_SIZE: usize = { crate::DEFAULT_PAGE_SIZE }> {
-    page_allocator: SpinNoIrq<CompositePageAllocator<PAGE_SIZE>>,
+    page_allocator: SpinNoIrq<BitmapAllocator<PAGE_SIZE>>,
     slab_allocator: SpinNoIrq<SlabByteAllocator<PAGE_SIZE>>,
     #[cfg(feature = "tracking")]
     stats: SpinNoIrq<UsageStats>,
@@ -57,7 +55,7 @@ pub struct GlobalAllocator<const PAGE_SIZE: usize = { crate::DEFAULT_PAGE_SIZE }
 impl<const PAGE_SIZE: usize> GlobalAllocator<PAGE_SIZE> {
     pub const fn new() -> Self {
         Self {
-            page_allocator: SpinNoIrq::new(CompositePageAllocator::<PAGE_SIZE>::new()),
+            page_allocator: SpinNoIrq::new(BitmapAllocator::<PAGE_SIZE>::new()),
             slab_allocator: SpinNoIrq::new(SlabByteAllocator::<PAGE_SIZE>::new()),
             #[cfg(feature = "tracking")]
             stats: SpinNoIrq::new(UsageStats {
@@ -81,9 +79,9 @@ impl<const PAGE_SIZE: usize> GlobalAllocator<PAGE_SIZE> {
             start_vaddr,
             start_vaddr + size
         );
-        // Initialize composite allocator first
+        // Initialize bitmap allocator first
         self.page_allocator.lock().init(start_vaddr, size);
-        info!("global allocator: Composite page allocator initialized");
+        info!("global allocator: Bitmap page allocator initialized");
 
         // Initialize slab allocator's global pool
         self.slab_allocator.lock().init();
@@ -92,7 +90,7 @@ impl<const PAGE_SIZE: usize> GlobalAllocator<PAGE_SIZE> {
         // Set up page allocator for slab
         {
             let page_alloc_ptr =
-                &mut *self.page_allocator.lock() as *mut CompositePageAllocator<PAGE_SIZE>;
+                &mut *self.page_allocator.lock() as *mut BitmapAllocator<PAGE_SIZE>;
             self.slab_allocator
                 .lock()
                 .set_page_allocator(page_alloc_ptr as *mut dyn PageAllocatorForSlab);
@@ -259,12 +257,6 @@ impl<const PAGE_SIZE: usize> GlobalAllocator<PAGE_SIZE> {
     pub fn get_stats(&self) -> UsageStats {
         *self.stats.lock()
     }
-
-    /// Get buddy allocator statistics
-    #[cfg(feature = "tracking")]
-    pub fn get_buddy_stats(&self) -> BuddyStats {
-        self.page_allocator.lock().get_buddy_stats()
-    }
 }
 
 impl<const PAGE_SIZE: usize> Default for GlobalAllocator<PAGE_SIZE> {
@@ -291,7 +283,7 @@ impl<const PAGE_SIZE: usize> PageAllocator for GlobalAllocator<PAGE_SIZE> {
             return Err(AllocError::NoMemory);
         }
 
-        let addr = <CompositePageAllocator<PAGE_SIZE> as PageAllocator>::alloc_pages(
+        let addr = <BitmapAllocator<PAGE_SIZE> as PageAllocator>::alloc_pages(
             &mut *self.page_allocator.lock(),
             num_pages,
             alignment,
@@ -313,7 +305,7 @@ impl<const PAGE_SIZE: usize> PageAllocator for GlobalAllocator<PAGE_SIZE> {
             return;
         }
 
-        <CompositePageAllocator<PAGE_SIZE> as PageAllocator>::dealloc_pages(
+        <BitmapAllocator<PAGE_SIZE> as PageAllocator>::dealloc_pages(
             &mut *self.page_allocator.lock(),
             pos,
             num_pages,
@@ -338,7 +330,7 @@ impl<const PAGE_SIZE: usize> PageAllocator for GlobalAllocator<PAGE_SIZE> {
             return Err(AllocError::NoMemory);
         }
 
-        let addr = <CompositePageAllocator<PAGE_SIZE> as PageAllocator>::alloc_pages_at(
+        let addr = <BitmapAllocator<PAGE_SIZE> as PageAllocator>::alloc_pages_at(
             &mut *self.page_allocator.lock(),
             base,
             num_pages,
