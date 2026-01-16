@@ -2,12 +2,6 @@
 //!
 //! Provides buddy allocator with support for multiple memory zones and
 //! a single shared global node pool for all zones and orders.
-//!
-//! # Architecture
-//!
-//! - **GlobalNodePool**: Stores linked-list nodes (NOT memory pages)
-//! - **BuddySetPool**: Each zone's free lists, using nodes from GlobalNodePool
-//! - **BuddyPageAllocator**: Coordinates multiple zones with shared node pool
 
 use crate::{AllocError, AllocResult, BaseAllocator, PageAllocator};
 
@@ -133,38 +127,47 @@ impl<const PAGE_SIZE: usize> BuddyPageAllocator<PAGE_SIZE> {
     /// Ensure the global node pool has enough free nodes.
     ///
     /// When the number of free nodes falls below a low-water mark,
-    /// reserve a few pages from zone 0 and add them as a new node region.
+    /// try to reserve a few pages from any available zone and add them as a new node region.
     fn maybe_expand_node_pool(&mut self) {
         let free_nodes = self.global_node_pool.free_node_count();
         if free_nodes >= NODE_POOL_LOW_WATER_NODES {
             return;
         }
         if self.num_zones == 0 {
+            error!("buddy allocator: no zones available to expand node pool");
             return;
         }
 
         let expand_pages = NODE_POOL_EXPAND_PAGES;
         let expand_size = expand_pages * PAGE_SIZE;
 
-        match self.zones[0].alloc_pages(&mut self.global_node_pool, expand_pages, PAGE_SIZE) {
-            Ok(addr) => {
-                #[cfg(feature = "log")]
-                info!(
-                    "buddy allocator: expanding node pool: free_nodes={} region=[{:#x}, {:#x})",
-                    free_nodes,
-                    addr,
-                    addr + expand_size
-                );
-                self.global_node_pool.add_region(addr, expand_size);
-            }
-            Err(_) => {
-                #[cfg(feature = "log")]
-                warn!(
-                    "buddy allocator: failed to expand node pool at low water: free_nodes={}",
-                    free_nodes
-                );
+        // Try all zones to allocate memory for node pool expansion
+        for i in 0..self.num_zones {
+            match self.zones[i].alloc_pages(&mut self.global_node_pool, expand_pages, PAGE_SIZE) {
+                Ok(addr) => {
+                    #[cfg(feature = "log")]
+                    info!(
+                        "buddy allocator: expanding node pool from zone {}: free_nodes={} region=[{:#x}, {:#x})",
+                        i,
+                        free_nodes,
+                        addr,
+                        addr + expand_size
+                    );
+                    self.global_node_pool.add_region(addr, expand_size);
+                    return;
+                }
+                Err(_) => {
+                    continue;
+                }
             }
         }
+
+        #[cfg(feature = "log")]
+        warn!(
+            "buddy allocator: failed to expand node pool at low water: free_nodes={} tried {} zones",
+            free_nodes,
+            self.num_zones
+        );
     }
 
     /// Add a new memory region as a new zone
@@ -215,6 +218,7 @@ impl<const PAGE_SIZE: usize> BuddyPageAllocator<PAGE_SIZE> {
         self.num_zones += 1;
 
         // Print all zone information after successfully adding a new memory region
+        #[cfg(feature = "tracking")]
         self.print_zone_info();
 
         Ok(())

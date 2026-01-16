@@ -132,8 +132,6 @@ impl<const PAGE_SIZE: usize> BuddySet<PAGE_SIZE> {
             list.clear(pool);
         }
 
-        // Linux-style initialization: release pages one by one
-        // This naturally handles memory regions of any size
         for pfn in 0..self.total_pages {
             let page_addr = self.base_addr + pfn * PAGE_SIZE;
             self.dealloc_pages(pool, page_addr, 1);
@@ -233,17 +231,14 @@ impl<const PAGE_SIZE: usize> BuddySet<PAGE_SIZE> {
             return;
         }
 
-        // Buddy system can only handle power-of-2 allocations
-        if !num_pages.is_power_of_two() {
-            error!(
-                "zone {}: Cannot free {} pages: must be power of 2",
-                self.zone_id, num_pages
-            );
-            return;
-        }
-
         // Calculate order for this deallocation
-        let mut order = num_pages.trailing_zeros() as usize;
+        // Handle non-power-of-2 allocations by rounding up (same as alloc_pages)
+        let mut order = if num_pages.is_power_of_two() {
+            num_pages.trailing_zeros() as usize
+        } else {
+            num_pages.next_power_of_two().trailing_zeros() as usize
+        };
+        
         if order > DEFAULT_MAX_ORDER {
             error!(
                 "zone {}: Order {} exceeds maximum supported order {}",
@@ -276,12 +271,11 @@ impl<const PAGE_SIZE: usize> BuddySet<PAGE_SIZE> {
         // Initialize block for merging
         let mut current_pfn = pfn;
 
-        // Try to merge with buddy blocks (Linux-style)
+        // Try to merge with buddy blocks
         while order < self.max_order() {
-            // Calculate buddy PFN using XOR operation (same as Linux kernel)
+            // Calculate buddy PFN using XOR operation
             let buddy_pfn = current_pfn ^ (1 << order);
 
-            // Verify buddy is within the zone
             let buddy_addr = buddy_pfn * PAGE_SIZE;
 
             if !self.addr_in_zone(buddy_addr) {
@@ -420,16 +414,12 @@ impl<const PAGE_SIZE: usize> BuddySet<PAGE_SIZE> {
             return Err(AllocError::InvalidParam);
         }
 
-        // Calculate required order (must be power of 2)
-        if !num_pages.is_power_of_two() {
-            error!(
-                "zone {}: Cannot allocate {} pages: must be power of 2",
-                self.zone_id, num_pages
-            );
-            return Err(AllocError::InvalidParam);
-        }
-
-        let required_order = num_pages.trailing_zeros() as usize;
+        // Calculate required order (round up to next power of 2 if needed)
+        let required_order = if num_pages.is_power_of_two() {
+            num_pages.trailing_zeros() as usize
+        } else {
+            num_pages.next_power_of_two().trailing_zeros() as usize
+        };
 
         // Calculate the order for the block that contains this address
         // The block must be aligned to its size
