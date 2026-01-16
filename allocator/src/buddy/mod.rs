@@ -1,22 +1,19 @@
 //! Buddy page allocator module
 //!
 //! This module provides a complete buddy system implementation with:
-//! - Sorted linked lists for efficient contiguity checking
+//! - Bitmap-based representation for efficient memory management
+//! - Self-contained metadata within each zone
 //! - Multi-zone support
 //! - Detailed statistics and debugging
 
 pub mod buddy_allocator;
 pub mod buddy_block;
 pub mod buddy_set;
-pub mod global_node_pool;
-pub mod pooled_list;
 pub mod stats;
 
 pub use buddy_allocator::BuddyPageAllocator;
-pub use buddy_block::{BuddyBlock, ZoneInfo, MAX_ZONES};
+pub use buddy_block::{ZoneInfo, MAX_ZONES};
 pub use buddy_set::BuddySet;
-pub use global_node_pool::{GlobalNodePool, ListNode, GLOBAL_TOTAL_NODES};
-pub use pooled_list::PooledLinkedList;
 #[cfg(feature = "tracking")]
 pub use stats::{BuddyStats, DEFAULT_MAX_ORDER};
 #[cfg(not(feature = "tracking"))]

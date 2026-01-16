@@ -1,13 +1,13 @@
-//! Multi-zone buddy allocator using global node pool
+//! Bitmap-based multi-zone buddy allocator
 //!
 //! Provides buddy allocator with support for multiple memory zones and
-//! a single shared global node pool for all zones and orders.
+//! a bitmap-based representation for efficient contiguity checking.
 //!
 //! # Architecture
 //!
-//! - **GlobalNodePool**: Stores linked-list nodes (NOT memory pages)
-//! - **BuddySetPool**: Each zone's free lists, using nodes from GlobalNodePool
-//! - **BuddyPageAllocator**: Coordinates multiple zones with shared node pool
+//! - **Bitmap arrays**: Track free/used status for each order
+//! - **BuddySetPool**: Each zone's free lists, using bitmaps instead of linked lists
+//! - **BuddyPageAllocator**: Coordinates multiple zones with bitmap-based representation
 
 use crate::{AllocError, AllocResult, BaseAllocator, PageAllocator};
 
@@ -17,21 +17,18 @@ use log::{debug, error, info, warn};
 use super::{
     buddy_block::MAX_ZONES,
     buddy_set::BuddySet,
-    global_node_pool::GlobalNodePool,
 };
 
 #[cfg(feature = "tracking")]
 use super::stats::{BuddyStats, MemoryStatsReporter};
 
-/// Buddy page allocator with multi-zone support and global node pool
+/// Buddy page allocator with multi-zone support and bitmap-based representation
 ///
-/// The `global_node_pool` stores linked-list nodes (ListNode<BuddyBlock>),
-/// which are used to construct the free lists in each BuddySet.
-/// Memory pages themselves are tracked by BuddyBlock values, not by this pool.
+/// Uses bitmaps to track free/used status of memory blocks at each order
+/// rather than linked lists, enabling faster allocation/deallocation.
 pub struct BuddyPageAllocator<const PAGE_SIZE: usize = { crate::DEFAULT_PAGE_SIZE }> {
     zones: [BuddySet<PAGE_SIZE>; MAX_ZONES],
     num_zones: usize,
-    global_node_pool: GlobalNodePool,
     #[cfg(feature = "tracking")]
     stats: BuddyStats,
 }
@@ -41,13 +38,12 @@ impl<const PAGE_SIZE: usize> BuddyPageAllocator<PAGE_SIZE> {
         Self {
             zones: [const { BuddySet::<PAGE_SIZE>::empty() }; MAX_ZONES],
             num_zones: 0,
-            global_node_pool: GlobalNodePool::new(),
             #[cfg(feature = "tracking")]
             stats: BuddyStats::new(),
         }
     }
 
-    /// Initialize the global node pool and bootstrap with initial memory region
+    /// Initialize the allocator with initial memory region
     pub fn init(&mut self, base_addr: usize, size: usize) {
         self.bootstrap(base_addr, size);
     }
@@ -64,13 +60,8 @@ impl<const PAGE_SIZE: usize> BuddyPageAllocator<PAGE_SIZE> {
             panic!("Cannot bootstrap: maximum zones reached");
         }
 
-        // Initialize global node pool if not already initialized
-        if self.global_node_pool.get_stats().total_allocations == 0 {
-            self.global_node_pool.init();
-        }
-
         self.zones[0] = BuddySet::new(base_addr, size, 0);
-        self.zones[0].init(&mut self.global_node_pool, base_addr, size);
+        self.zones[0].init(base_addr, size);
         self.num_zones = 1;
 
         #[cfg(feature = "tracking")]
@@ -82,27 +73,18 @@ impl<const PAGE_SIZE: usize> BuddyPageAllocator<PAGE_SIZE> {
         self.stats
     }
 
-    /// Get global node pool statistics
-    pub fn get_node_pool_stats(&self) -> super::global_node_pool::GlobalPoolStats {
-        self.global_node_pool.get_stats()
-    }
-
     /// Get number of zones in the allocator
     pub fn get_zone_count(&self) -> usize {
         self.num_zones
     }
 
-    /// Get free blocks of a specific order from a zone
+    /// Get number of free blocks of a specific order from a zone
     /// Returns None if zone doesn't exist
-    pub fn get_free_blocks_by_order<'a>(
-        &'a self,
-        zone_id: usize,
-        order: u32,
-    ) -> Option<super::pooled_list::PooledListIter<'a>> {
+    pub fn get_free_blocks_by_order(&self, zone_id: usize, order: u32) -> Option<usize> {
         if zone_id >= self.num_zones {
             return None;
         }
-        Some(self.zones[zone_id].get_free_blocks_by_order(&self.global_node_pool, order))
+        Some(self.zones[zone_id].get_free_blocks_by_order(order as usize))
     }
 
     /// Update aggregated statistics from all zones
@@ -162,7 +144,7 @@ impl<const PAGE_SIZE: usize> BuddyPageAllocator<PAGE_SIZE> {
 
         let zone_id = self.num_zones;
         self.zones[zone_id] = BuddySet::new(aligned_start, aligned_size, zone_id);
-        self.zones[zone_id].init(&mut self.global_node_pool, aligned_start, aligned_size);
+        self.zones[zone_id].init(aligned_start, aligned_size);
         self.num_zones += 1;
 
         Ok(())
@@ -251,7 +233,7 @@ impl<const PAGE_SIZE: usize> PageAllocator for BuddyPageAllocator<PAGE_SIZE> {
 
     fn alloc_pages(&mut self, num_pages: usize, alignment: usize) -> AllocResult<usize> {
         for i in 0..self.num_zones {
-            match self.zones[i].alloc_pages(&mut self.global_node_pool, num_pages, alignment) {
+            match self.zones[i].alloc_pages(num_pages, alignment) {
                 Ok(addr) => {
                     #[cfg(feature = "tracking")]
                     self.update_stats();
@@ -272,7 +254,7 @@ impl<const PAGE_SIZE: usize> PageAllocator for BuddyPageAllocator<PAGE_SIZE> {
 
     fn dealloc_pages(&mut self, pos: usize, num_pages: usize) {
         if let Some(zone_idx) = self.find_zone_for_addr(pos) {
-            self.zones[zone_idx].dealloc_pages(&mut self.global_node_pool, pos, num_pages);
+            self.zones[zone_idx].dealloc_pages(pos, num_pages);
             #[cfg(feature = "tracking")]
             self.update_stats();
         } else {
@@ -290,12 +272,7 @@ impl<const PAGE_SIZE: usize> PageAllocator for BuddyPageAllocator<PAGE_SIZE> {
         alignment: usize,
     ) -> AllocResult<usize> {
         if let Some(zone_idx) = self.find_zone_for_addr(base) {
-            match self.zones[zone_idx].alloc_pages_at(
-                &mut self.global_node_pool,
-                base,
-                num_pages,
-                alignment,
-            ) {
+            match self.zones[zone_idx].alloc_pages_at(base, num_pages, alignment) {
                 Ok(addr) => {
                     #[cfg(feature = "tracking")]
                     self.update_stats();

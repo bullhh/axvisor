@@ -55,11 +55,11 @@ impl MemoryStatsReporter {
     /// Print detailed allocation failure statistics
     /// This is a standalone function to keep allocation logic clean
     pub fn print_alloc_failure_stats(
-        page_size: usize,
-        num_zones: usize,
-        total_stats: &BuddyStats,
-        zone_infos: &[ZoneInfo],
-        zone_stats: &[BuddyStats],
+        _page_size: usize,
+        _num_zones: usize,
+        _total_stats: &BuddyStats,
+        _zone_infos: &[ZoneInfo],
+        _zone_stats: &[BuddyStats],
         request_pages: usize,
         request_align: usize,
     ) {
@@ -70,46 +70,46 @@ impl MemoryStatsReporter {
             error!(
                 "Request: {} pages ({} KB, alignment:{})",
                 request_pages,
-                (request_pages * page_size) / (1024),
+                (request_pages * _page_size) / (1024),
                 request_align
             );
 
             error!("Overall Memory State:");
-            error!("  Total zones: {}", num_zones);
+            error!("  Total zones: {}", _num_zones);
             error!(
                 "  Total pages: {} ({} KB)",
-                total_stats.total_pages,
-                (total_stats.total_pages * page_size) / 1024
+                _total_stats.total_pages,
+                (_total_stats.total_pages * _page_size) / 1024
             );
             error!(
                 "  Free pages: {} ({} KB)",
-                total_stats.free_pages,
-                (total_stats.free_pages * page_size) / (1024)
+                _total_stats.free_pages,
+                (_total_stats.free_pages * _page_size) / (1024)
             );
             error!(
                 "  Used pages: {} ({} KB)",
-                total_stats.used_pages,
-                (total_stats.used_pages * page_size) / (1024)
+                _total_stats.used_pages,
+                (_total_stats.used_pages * _page_size) / (1024)
             );
             error!("========================================");
 
-            for i in 0..num_zones {
+            for i in 0.._num_zones {
                 error!("Zone {}:", i);
                 error!(
                     "  Range: [{:#x}, {:#x})",
-                    zone_infos[i].start_addr, zone_infos[i].end_addr
+                    _zone_infos[i].start_addr, _zone_infos[i].end_addr
                 );
-                error!("  Total pages: {}", zone_infos[i].total_pages);
+                error!("  Total pages: {}", _zone_infos[i].total_pages);
                 error!(
                     "  Free pages: {} / {}",
-                    zone_stats[i].free_pages, zone_infos[i].total_pages
+                    _zone_stats[i].free_pages, _zone_infos[i].total_pages
                 );
                 error!("  Free blocks by order:");
 
                 for order in (0..=DEFAULT_MAX_ORDER).rev() {
-                    let count = zone_stats[i].free_pages_by_order[order];
+                    let count = _zone_stats[i].free_pages_by_order[order];
                     if count > 0 {
-                        let block_size = (1 << order) * page_size;
+                        let block_size = (1 << order) * _page_size;
                         let total_kb = (count * block_size) / (1024);
                         error!(
                             "    Order {}: {} blocks ({} KB each, {} KB total)",

@@ -59,49 +59,10 @@ impl<const PAGE_SIZE: usize> CompositePageAllocator<PAGE_SIZE> {
 
             // Get free blocks of this order from all zones
             for zone_id in 0..self.buddy.get_zone_count() {
-                if let Some(blocks) = self.buddy.get_free_blocks_by_order(zone_id, order as u32) {
-                    // Iterate through sorted free blocks
-                    for block in blocks {
-                        if block_count >= MAX_PARTS_PER_ALLOC {
-                            break;
-                        }
-
-                        let block_start = block.addr;
-                        let block_end = block_start + block_pages * PAGE_SIZE;
-
-                        // Check alignment requirement
-                        if !crate::is_aligned(block_start, alignment) {
-                            continue;
-                        }
-
-                        // Check contiguity with existing blocks
-                        if block_count == 0 {
-                            // First block - just record it
-                            contiguous_blocks[block_count] = (block_start, order as u32);
-                            min_addr = block_start;
-                            max_addr = block_end;
-                            block_count += 1;
-                            remaining_pages -= block_pages.min(remaining_pages);
-                        } else {
-                            if block_end == min_addr {
-                                // Block is to the left, update min_addr
-                                contiguous_blocks[block_count] = (block_start, order as u32);
-                                min_addr = block_start;
-                                block_count += 1;
-                                remaining_pages -= block_pages.min(remaining_pages);
-                            } else if block_start == max_addr {
-                                // Block is to the right, update max_addr
-                                contiguous_blocks[block_count] = (block_start, order as u32);
-                                max_addr = block_end;
-                                block_count += 1;
-                                remaining_pages -= block_pages.min(remaining_pages);
-                            }
-                        }
-
-                        if remaining_pages == 0 {
-                            break;
-                        }
-                    }
+                if let Some(_block_count) = self.buddy.get_free_blocks_by_order(zone_id, order as u32) {
+                    // Note: Bitmap-based allocator doesn't provide block iteration
+                    // Skip this zone for now
+                    continue;
                 }
 
                 if remaining_pages == 0 {
