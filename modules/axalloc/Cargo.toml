@@ -9,11 +9,10 @@ repository = "https://github.com/arceos-org/arceos/tree/main/modules/axalloc"
 
 [features]
 default = []
-level-1 = []
-tracking = ["dep:percpu", "dep:axbacktrace"]
+tracking = ["dep:percpu", "dep:axbacktrace", "buddy-slab-allocator/tracking"]
 
 [dependencies]
-buddy-slab-allocator = { path = "../../allocator" , features = ["log", "tracking"]}
+buddy-slab-allocator = { path = "../../allocator", features = ["log"] }
 axbacktrace = { workspace = true, optional = true }
 axerrno.workspace = true
 cfg-if.workspace = true

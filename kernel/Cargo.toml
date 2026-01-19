@@ -23,7 +23,7 @@ timer_list = "0.1.0"
 
 # System dependent modules provided by ArceOS.
 axstd = {workspace = true, features = [
-  "alloc-level-1",
+  "alloc",
   "paging",
   "irq",
   "multitask",

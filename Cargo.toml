@@ -34,7 +34,7 @@ toml = "0.9"
 # System dependent modules provided by ArceOS.
 # FIXME: pin to a specific tag!
 axstd = {git = "https://github.com/arceos-org/arceos.git", tag = "dev-251202", features = [
-  "alloc-level-1",
+  "alloc",
   "paging",
   "irq",
   "multitask",

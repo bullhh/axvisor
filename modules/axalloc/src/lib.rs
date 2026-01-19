@@ -1,7 +1,4 @@
 //! The Axvisor memory allocator.
-//!
-//! This module provides memory allocation capabilities for both page-level and byte-level
-//! allocations, with support for NUMA-aware allocation and memory tracking.
 
 #![no_std]
 
@@ -78,7 +75,7 @@ impl fmt::Debug for Usages {
 
 /// The global allocator used by ArceOS.
 ///
-/// This is an adapter around the axvisor_allocator::GlobalAllocator that provides
+/// This is an adapter around the allocator::GlobalAllocator that provides
 /// compatibility with the original axalloc API.
 pub struct GlobalAllocator {
     inner: buddy_slab_allocator::GlobalAllocator<PAGE_SIZE>,
@@ -102,12 +99,15 @@ impl GlobalAllocator {
 
     /// Returns the name of the allocator.
     pub const fn name(&self) -> &'static str {
-        "axvisor allocator"
+        "buddy_slab_allocator"
     }
 
     /// Initializes the allocator with the given region.
     pub fn init(&self, start_vaddr: usize, size: usize) {
-        info!("axalloc: Initialize global memory allocator...");
+        info!(
+            "Initialize global memory allocator, start_vaddr: {}, size: {}",
+            start_vaddr, size
+        );
         if let Err(e) = self.inner.init(start_vaddr, size) {
             panic!("Failed to initialize allocator: {:?}", e);
         }
@@ -115,6 +115,10 @@ impl GlobalAllocator {
 
     /// Add the given region to the allocator.
     pub fn add_memory(&self, start_vaddr: usize, size: usize) -> AllocResult {
+        info!(
+            "Add memory region, start_vaddr: {}, size: {}",
+            start_vaddr, size
+        );
         self.inner.add_memory(start_vaddr, size)
     }
 
@@ -140,10 +144,10 @@ impl GlobalAllocator {
     pub fn alloc_pages(
         &self,
         num_pages: usize,
-        align_pow2: usize,
+        alignment: usize,
         kind: UsageKind,
     ) -> AllocResult<usize> {
-        let result = self.inner.alloc_pages(num_pages, align_pow2);
+        let result = self.inner.alloc_pages(num_pages, alignment);
         if let Ok(_addr) = result {
             let size = num_pages * PAGE_SIZE;
             self.usages.lock().alloc(kind, size);
@@ -156,10 +160,10 @@ impl GlobalAllocator {
         &mut self,
         start: usize,
         num_pages: usize,
-        align_pow2: usize,
+        alignment: usize,
         kind: UsageKind,
     ) -> AllocResult<usize> {
-        let result = self.inner.alloc_pages_at(start, num_pages, align_pow2);
+        let result = self.inner.alloc_pages_at(start, num_pages, alignment);
         if let Ok(_addr) = result {
             let size = num_pages * PAGE_SIZE;
             self.usages.lock().alloc(kind, size);
@@ -242,12 +246,47 @@ unsafe impl GlobalAlloc for GlobalAllocator {
                 alloc::alloc::handle_alloc_error(layout)
             }
         };
+
+        #[cfg(feature = "tracking")]
+        {
+            tracking::with_state(|state| match state {
+                None => inner(),
+                Some(state) => {
+                    let ptr = inner();
+                    let generation = state.generation;
+                    state.generation += 1;
+                    state.map.insert(
+                        ptr as usize,
+                        tracking::AllocationInfo {
+                            layout,
+                            backtrace: axbacktrace::Backtrace::capture(),
+                            generation,
+                        },
+                    );
+                    ptr
+                }
+            })
+        }
+
+        #[cfg(not(feature = "tracking"))]
         inner()
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         let ptr = NonNull::new(ptr).expect("dealloc null ptr");
         let inner = || GlobalAllocator::dealloc(self, ptr, layout);
+
+        #[cfg(feature = "tracking")]
+        tracking::with_state(|state| match state {
+            None => inner(),
+            Some(state) => {
+                let address = ptr.as_ptr() as usize;
+                state.map.remove(&address);
+                inner()
+            }
+        });
+
+        #[cfg(not(feature = "tracking"))]
         inner();
     }
 }
@@ -269,11 +308,6 @@ pub fn global_allocator() -> &'static GlobalAllocator {
 ///
 /// This function should be called only once, and before any allocation.
 pub fn global_init(start_vaddr: usize, size: usize) {
-    info!(
-        "initialize global allocator at: [{:#x}, {:#x})",
-        start_vaddr,
-        start_vaddr + size
-    );
     GLOBAL_ALLOCATOR.init(start_vaddr, size);
     info!("global allocator initialized");
 }

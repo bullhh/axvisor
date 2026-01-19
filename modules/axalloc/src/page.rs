@@ -32,9 +32,9 @@ impl GlobalPage {
     }
 
     /// Allocate contiguous 4K-sized pages.
-    pub fn alloc_contiguous(num_pages: usize, align_pow2: usize) -> AxResult<Self> {
+    pub fn alloc_contiguous(num_pages: usize, alignment: usize) -> AxResult<Self> {
         let vaddr = global_allocator()
-            .alloc_pages(num_pages, align_pow2, UsageKind::Global)
+            .alloc_pages(num_pages, alignment, UsageKind::Global)
             .map_err(|_| axerrno::AxError::from(axerrno::AxErrorKind::NoMemory))?;
         Ok(Self {
             start_vaddr: vaddr.into(),
