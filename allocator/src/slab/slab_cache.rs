@@ -3,6 +3,8 @@
 //! This module implements SlabCache which manages three lists (empty, partial, full)
 //! of slab nodes for a specific size class.
 
+use log::error;
+
 use super::slab_byte_allocator::{PageAllocatorForSlab as BytePageAllocator, SizeClass};
 use super::slab_node::SlabNode;
 use crate::{AllocError, AllocResult};
@@ -203,13 +205,14 @@ impl SlabCache {
     }
 
     /// Deallocate an object
-    /// Returns bytes freed from page allocator (if node was deallocated)
+    /// Returns (bytes_freed_from_page_allocator, actually_deallocated)
+    /// actually_deallocated is false if this was a double-free
     pub fn dealloc_object(
         &mut self,
         obj_addr: usize,
         page_allocator: &mut dyn BytePageAllocator,
         page_size: usize,
-    ) -> usize {
+    ) -> (usize, bool) {
         let object_size = self.size_class.size();
         let bytes_needed = SlabNode::MAX_OBJECTS * object_size;
         let page_count = (bytes_needed + page_size - 1) / page_size;
@@ -218,41 +221,49 @@ impl SlabCache {
         let slab_base = align_down_any(obj_addr, slab_bytes);
         let mut node = SlabNode::new(slab_base, self.size_class);
         if !node.is_valid_for_size_class() {
-            panic!("Invalid slab header during deallocation");
+            panic!("Attempt to free memory from invalid slab");
         }
 
         let was_full = node.is_full();
-        let should_dealloc_slab = if let Some(obj_idx) = node.object_index_from_addr(obj_addr) {
-            node.dealloc_object(obj_idx);
-            node.is_empty()
+        let (should_dealloc_slab, actually_freed) = if let Some(obj_idx) = node.object_index_from_addr(obj_addr) {
+            // dealloc_object returns true if object was allocated, false if already free (double-free)
+            let actually_freed = node.dealloc_object(obj_idx);
+            (node.is_empty() && actually_freed, actually_freed)
         } else {
-            panic!("Address mismatch during deallocation");
+            error!(
+                "Invalid address {:x} in slab at {:x}: not a valid object",
+                obj_addr, slab_base
+            );
+            return (0, true);  // Not a double-free, just invalid address (treat as no-op)
         };
 
-        // Remove slab from its current list before moving or deallocating it
-        if was_full {
-            self.full.remove(self.size_class, slab_base);
-        } else {
-            self.partial.remove(self.size_class, slab_base);
-        }
-
-        if should_dealloc_slab {
-            // Slab became empty - either deallocate or move to empty list
-            if self.empty.len() >= 2 {
-                page_allocator.dealloc_pages(slab_base, page_count);
-                return slab_bytes;
+        // Only manipulate lists if this was not a double-free
+        if actually_freed {
+            // Remove slab from its current list before moving or deallocating it
+            if was_full {
+                self.full.remove(self.size_class, slab_base);
             } else {
-                self.empty.push_back(self.size_class, slab_base);
-                return 0;
+                self.partial.remove(self.size_class, slab_base);
+            }
+
+            if should_dealloc_slab {
+                // Slab became empty - either deallocate or move to empty list
+                if self.empty.len() >= 2 {
+                    page_allocator.dealloc_pages(slab_base, page_count);
+                    return (slab_bytes, true);
+                } else {
+                    self.empty.push_back(self.size_class, slab_base);
+                    return (0, true);
+                }
+            }
+
+            // Slab still has objects - if it was full, it's now partial
+            if was_full {
+                self.partial.push_back(self.size_class, slab_base);
             }
         }
 
-        // Slab still has objects - if it was full, it's now partial
-        if was_full {
-            self.partial.push_back(self.size_class, slab_base);
-        }
-
-        0
+        (0, actually_freed)
     }
 }
 

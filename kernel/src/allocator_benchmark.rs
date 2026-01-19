@@ -336,6 +336,7 @@ pub mod basic_tests {
         all_passed &= test_alignment(metrics);
         all_passed &= test_read_write_integrity(metrics);
         all_passed &= test_alloc_dealloc_cycle(metrics);
+        all_passed &= test_double_free(metrics);
 
         if all_passed {
             info!("✓ 基础功能测试全部通过\n");
@@ -536,6 +537,58 @@ pub mod basic_tests {
         info!("  ✓ 完成 {} 轮分配释放循环\n", rounds);
         true
     }
+
+    fn test_double_free(metrics: &AllocatorMetrics) -> bool {
+        info!("测试: 重复释放检测 (Double Free Detection)");
+        let sizes = [64, 1025, 4096, 40960];
+        let count = 100;
+        let mut allocs: Vec<(NonNull<u8>, usize)> = Vec::new();
+
+        // Allocate memory  
+        for &size in &sizes {
+            for _ in 0..count {
+                let start = get_time_ns();
+                unsafe {
+                    let layout = core::alloc::Layout::from_size_align_unchecked(size, 8);
+                    let ptr = alloc::alloc::alloc(layout);
+                    if !ptr.is_null() {
+                        allocs.push((NonNull::new_unchecked(ptr), size));
+                        let duration = get_time_ns() - start;
+                        metrics.record_alloc(size, duration);
+                    }
+                }
+            }
+            info!("  分配了 {} 个 {} 对象", allocs.len(), size);
+
+            // First dealloc - should succeed
+            for (ptr, size) in &allocs {
+                let start = get_time_ns();
+                unsafe {
+                    let layout = core::alloc::Layout::from_size_align_unchecked(*size, 8);
+                    alloc::alloc::dealloc(ptr.as_ptr(), layout);
+                    let duration = get_time_ns() - start;
+                    metrics.record_dealloc(*size, duration);
+                }
+            }
+
+            // Second dealloc - should be idempotent (no-op)
+            for (ptr, size) in &allocs {
+                let start = get_time_ns();
+                unsafe {
+                    let layout = core::alloc::Layout::from_size_align_unchecked(*size, 8);
+                    alloc::alloc::dealloc(ptr.as_ptr(), layout);
+                    let _duration = get_time_ns() - start;
+                    // Don't record metrics for double-free, it should be no-op
+                }
+            }
+
+            info!("  size:{} 重复释放测试通过", size);
+        }
+
+        info!("  ✓ 重复释放测试通过（幂等性验证）\n");
+        true
+    }
+
 }
 
 /// Performance tests

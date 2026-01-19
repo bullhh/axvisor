@@ -145,17 +145,24 @@ impl SlabNode {
         None
     }
 
-    pub fn dealloc_object(&mut self, object_index: usize) {
+    pub fn dealloc_object(&mut self, object_index: usize) -> bool {
         let header = self.header_mut();
         if object_index < header.object_count as usize {
             let word_idx = object_index / 64;
             let bit_idx = object_index % 64;
             let mask = 1u64 << bit_idx;
             let was_free = (header.free_bitmap[word_idx] & mask) != 0;
-            header.free_bitmap[word_idx] |= mask;
-            if !was_free {
-                header.free_count = header.free_count.saturating_add(1);
+
+            if was_free {
+                // Object is already free (double-free), return false to indicate no actual change
+                return false;
             }
+
+            header.free_bitmap[word_idx] |= mask;
+            header.free_count = header.free_count.saturating_add(1);
+            true  // Object was successfully deallocated
+        } else {
+            false
         }
     }
 

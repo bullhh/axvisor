@@ -267,6 +267,14 @@ impl<const PAGE_SIZE: usize> BuddySet<PAGE_SIZE> {
             return;
         }
 
+        // Check if this block is already free (double-free detection)
+        // We need to check if this exact block (addr, order) is in the free list
+        // This is important for double-free detection, especially after buddy merging
+        if self.find_block_in_order(pool, order, addr).is_some() {
+            // Block is already free - double-free detected, treat as success (no-op)
+            return;
+        }
+
         // Initialize block for merging
         let mut current_pfn = pfn;
 

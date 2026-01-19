@@ -52,6 +52,12 @@ impl PooledLinkedList {
             }
 
             if let Some(node) = pool.get_node(idx) {
+                if node.data.addr == data.addr {
+                    // Block already in free list - this is a success (no-op)
+                    // The caller tried to free something that's already free
+                    pool.dealloc_node(new_node_idx);
+                    return true;
+                }
                 if node.data.addr > data.addr {
                     break; // Found position
                 }

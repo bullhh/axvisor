@@ -7,8 +7,11 @@ use crate::{AllocError, AllocResult, BaseAllocator, PageAllocator};
 
 use log::{debug, error, info, warn};
 
+#[cfg(feature = "tracking")]
+use super::ZoneInfo;
+
 use super::{
-    buddy_block::{ZoneInfo, MAX_ZONES},
+    buddy_block::MAX_ZONES,
     buddy_set::BuddySet,
     global_node_pool::GlobalNodePool,
 };
