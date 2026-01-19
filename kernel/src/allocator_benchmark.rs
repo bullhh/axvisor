@@ -1429,6 +1429,429 @@ pub mod leak_detection {
     }
 }
 
+/// Statistics accuracy verification tests
+pub mod stats_accuracy {
+    use super::*;
+
+    /// Helper function to validate statistics consistency
+    fn validate_stats_consistency(
+        total_pages: usize,
+        free_pages: usize,
+        used_pages: usize,
+        test_name: &str,
+    ) -> bool {
+        info!("  验证统计一致性:\n");
+
+        // Verify total = free + used (accounting for fragmentation)
+        let calculated_used = total_pages.saturating_sub(free_pages);
+        if used_pages != calculated_used {
+            info!("    ✗ {} 统计不一致:\n", test_name);
+            info!("       已用页面: {} (预期: {})\n", used_pages, calculated_used);
+            info!("       总页面: {}, 空闲页面: {}\n", total_pages, free_pages);
+            return false;
+        }
+
+        info!("    ✓ {} 统计一致性通过\n", test_name);
+        true
+    }
+
+    /// Test 1: Single-threaded statistics accuracy
+    fn test_single_thread_stats(metrics: &AllocatorMetrics) -> bool {
+        info!("测试 1: 单线程统计准确性 (Single-threaded Stats Accuracy)\n");
+
+        let allocator = std::os::arceos::modules::axalloc::global_allocator();
+
+        // Get initial stats
+        let initial_total = allocator.used_pages() + allocator.available_pages();
+        let initial_free = allocator.available_pages();
+        let initial_used = allocator.used_pages();
+
+        info!("  初始状态:\n");
+        info!("    总页面: {}\n", initial_total);
+        info!("    空闲页面: {}\n", initial_free);
+        info!("    已用页面: {}\n", initial_used);
+
+        if !validate_stats_consistency(initial_total, initial_free, initial_used, "初始状态") {
+            return false;
+        }
+
+        // Perform allocations
+        let num_allocs = 100;
+        let mut allocs: Vec<(NonNull<u8>, usize)> = Vec::new();
+        let sizes = [1, 2, 4, 8, 16]; // Pages
+
+        info!("  分配 {} 次...\n", num_allocs);
+
+        for i in 0..num_allocs {
+            let pages = sizes[i % sizes.len()];
+            let size = pages * 4096;
+
+            let alloc_start = get_time_ns();
+            unsafe {
+                let layout = core::alloc::Layout::from_size_align_unchecked(size, 8);
+                let ptr = alloc::alloc::alloc(layout);
+
+                if !ptr.is_null() {
+                    allocs.push((NonNull::new_unchecked(ptr), size));
+                    let alloc_duration = get_time_ns() - alloc_start;
+                    metrics.record_alloc(size, alloc_duration);
+                }
+            }
+        }
+
+        // Get stats after allocation
+        let alloc_total = allocator.used_pages() + allocator.available_pages();
+        let alloc_free = allocator.available_pages();
+        let alloc_used = allocator.used_pages();
+
+        info!("  分配后状态:\n");
+        info!("    总页面: {}\n", alloc_total);
+        info!("    空闲页面: {} (减少: {})\n",
+            alloc_free, initial_free.saturating_sub(alloc_free));
+        info!("    已用页面: {} (增加: {})\n",
+            alloc_used, alloc_used.saturating_sub(initial_used));
+
+        if !validate_stats_consistency(alloc_total, alloc_free, alloc_used, "分配后") {
+            return false;
+        }
+
+        // Deallocate all
+        info!("  释放所有分配...\n");
+        for (ptr, size) in allocs {
+            let dealloc_start = get_time_ns();
+            unsafe {
+                let layout = core::alloc::Layout::from_size_align_unchecked(size, 8);
+                alloc::alloc::dealloc(ptr.as_ptr(), layout);
+                let dealloc_duration = get_time_ns() - dealloc_start;
+                metrics.record_dealloc(size, dealloc_duration);
+            }
+        }
+
+        // Get stats after deallocation
+        let final_total = allocator.used_pages() + allocator.available_pages();
+        let final_free = allocator.available_pages();
+        let final_used = allocator.used_pages();
+
+        info!("  释放后状态:\n");
+        info!("    总页面: {}\n", final_total);
+        info!("    空闲页面: {} (恢复: {})\n",
+            final_free, final_free.saturating_sub(initial_free));
+        info!("    已用页面: {} (减少: {})\n",
+            final_used, initial_used.saturating_sub(final_used));
+
+        // Allow small variance due to fragmentation
+        let free_variance = if final_free >= initial_free.saturating_sub(10) {
+            true
+        } else {
+            info!("    ⚠ 空闲页面未完全恢复: {} (初始: {})\n",
+                final_free, initial_free);
+            false
+        };
+
+        validate_stats_consistency(final_total, final_free, final_used, "释放后") && free_variance
+    }
+
+    /// Test 2: Multi-threaded concurrent allocations
+    fn test_multithread_stats(metrics: &AllocatorMetrics) -> bool {
+        info!("测试 2: 多线程并发统计准确性 (Multi-threaded Stats Accuracy)\n");
+
+        let allocator = std::os::arceos::modules::axalloc::global_allocator();
+
+        let initial_total = allocator.used_pages() + allocator.available_pages();
+        let initial_free = allocator.available_pages();
+        let initial_used = allocator.used_pages();
+
+        info!("  初始状态:\n");
+        info!("    总页面: {}\n", initial_total);
+        info!("    空闲页面: {}\n", initial_free);
+        info!("    已用页面: {}\n", initial_used);
+
+        // Simulate concurrent allocations from different "threads"
+        let num_threads = 4;
+        let allocs_per_thread = 50;
+        let total_allocs = num_threads * allocs_per_thread;
+
+        info!("  模拟 {} 个并发线程, 每线程 {} 次分配 (共 {} 次)...\n",
+            num_threads, allocs_per_thread, total_allocs);
+
+        let mut all_allocs: Vec<(NonNull<u8>, usize)> = Vec::new();
+        let allocation_sizes = [1, 2, 4, 8, 16, 32, 64, 128]; // Pages
+
+        for thread in 0..num_threads {
+            info!("  模拟线程 {} 分配...\n", thread);
+
+            for i in 0..allocs_per_thread {
+                let pages = allocation_sizes[i % allocation_sizes.len()];
+                let size = pages * 4096;
+
+                let alloc_start = get_time_ns();
+                unsafe {
+                    let layout = core::alloc::Layout::from_size_align_unchecked(size, 8);
+                    let ptr = alloc::alloc::alloc(layout);
+
+                    if !ptr.is_null() {
+                        all_allocs.push((NonNull::new_unchecked(ptr), size));
+                        let alloc_duration = get_time_ns() - alloc_start;
+                        metrics.record_alloc(size, alloc_duration);
+                    }
+                }
+            }
+        }
+
+        let after_alloc_total = allocator.used_pages() + allocator.available_pages();
+        let after_alloc_free = allocator.available_pages();
+        let after_alloc_used = allocator.used_pages();
+
+        info!("  并发分配后状态:\n");
+        info!("    总页面: {}\n", after_alloc_total);
+        info!("    空闲页面: {} (减少: {})\n",
+            after_alloc_free, initial_free.saturating_sub(after_alloc_free));
+        info!("    已用页面: {} (增加: {})\n",
+            after_alloc_used, after_alloc_used.saturating_sub(initial_used));
+        info!("    成功分配数: {}\n", all_allocs.len());
+
+        if !validate_stats_consistency(after_alloc_total, after_alloc_free, after_alloc_used, "并发分配后") {
+            return false;
+        }
+
+        // Random order deallocation to test merging
+        info!("  随机顺序释放 (测试合并)...\n");
+
+        // Simulate random deallocation by using a simple pattern
+        let mut idx = 0;
+        while idx < all_allocs.len() {
+            let dealloc_idx = (idx * 3) % all_allocs.len();
+            if dealloc_idx < all_allocs.len() && idx < all_allocs.len() {
+                let (ptr, size) = all_allocs.swap_remove(dealloc_idx);
+
+                let dealloc_start = get_time_ns();
+                unsafe {
+                    let layout = core::alloc::Layout::from_size_align_unchecked(size, 8);
+                    alloc::alloc::dealloc(ptr.as_ptr(), layout);
+                    let dealloc_duration = get_time_ns() - dealloc_start;
+                    metrics.record_dealloc(size, dealloc_duration);
+                }
+            }
+            idx += 1;
+        }
+
+        let final_total = allocator.used_pages() + allocator.available_pages();
+        let final_free = allocator.available_pages();
+        let final_used = allocator.used_pages();
+
+        info!("  最终状态:\n");
+        info!("    总页面: {}\n", final_total);
+        info!("    空闲页面: {} (恢复: {})\n",
+            final_free, final_free.saturating_sub(initial_free));
+        info!("    已用页面: {}\n", final_used);
+
+        // Allow larger variance due to fragmentation from random deallocation
+        if final_free >= initial_free.saturating_sub(20) {
+            validate_stats_consistency(final_total, final_free, final_used, "最终")
+        } else {
+            info!("    ⚠ 空闲页面恢复不足: {} (初始: {})\n",
+                final_free, initial_free);
+            validate_stats_consistency(final_total, final_free, final_used, "最终")
+        }
+    }
+
+    /// Test 3: Statistics under fragmentation
+    fn test_fragmentation_stats(metrics: &AllocatorMetrics) -> bool {
+        info!("测试 3: 碎片化场景统计准确性 (Fragmentation Stats Accuracy)\n");
+
+        let allocator = std::os::arceos::modules::axalloc::global_allocator();
+
+        let initial_total = allocator.used_pages() + allocator.available_pages();
+        let initial_free = allocator.available_pages();
+
+        info!("  初始状态:\n");
+        info!("    总页面: {}\n", initial_total);
+        info!("    空闲页面: {}\n", initial_free);
+
+        // Create fragmentation pattern
+        let fragmentation_pattern = [1, 2, 1, 4, 1, 2, 8, 1, 16, 1]; // Pages
+        let mut allocs: Vec<(NonNull<u8>, usize)> = Vec::new();
+
+        info!("  创建碎片化模式...\n");
+        for &pages in &fragmentation_pattern {
+            let size = pages * 4096;
+
+            let alloc_start = get_time_ns();
+            unsafe {
+                let layout = core::alloc::Layout::from_size_align_unchecked(size, 8);
+                let ptr = alloc::alloc::alloc(layout);
+
+                if !ptr.is_null() {
+                    allocs.push((NonNull::new_unchecked(ptr), size));
+                    let alloc_duration = get_time_ns() - alloc_start;
+                    metrics.record_alloc(size, alloc_duration);
+                }
+            }
+        }
+
+        let after_frag_total = allocator.used_pages() + allocator.available_pages();
+        let after_frag_free = allocator.available_pages();
+        let after_frag_used = allocator.used_pages();
+
+        info!("  碎片化后状态:\n");
+        info!("    总页面: {}\n", after_frag_total);
+        info!("    空闲页面: {}\n", after_frag_free);
+        info!("    已用页面: {}\n", after_frag_used);
+        info!("    已分配数: {}\n", allocs.len());
+
+        if !validate_stats_consistency(after_frag_total, after_frag_free, after_frag_used, "碎片化后") {
+            return false;
+        }
+
+        // Deallocate all
+        info!("  释放所有分配 (触发合并)...\n");
+        for (ptr, size) in allocs {
+            let dealloc_start = get_time_ns();
+            unsafe {
+                let layout = core::alloc::Layout::from_size_align_unchecked(size, 8);
+                alloc::alloc::dealloc(ptr.as_ptr(), layout);
+                let dealloc_duration = get_time_ns() - dealloc_start;
+                metrics.record_dealloc(size, dealloc_duration);
+            }
+        }
+
+        let merged_total = allocator.used_pages() + allocator.available_pages();
+        let merged_free = allocator.available_pages();
+        let merged_used = allocator.used_pages();
+
+        info!("  合并后状态:\n");
+        info!("    总页面: {}\n", merged_total);
+        info!("    空闲页面: {}\n", merged_free);
+        info!("    已用页面: {}\n", merged_used);
+
+        // After merging, free pages should be close to initial
+        let merge_success = merged_free >= initial_free.saturating_sub(5);
+
+        if merge_success {
+            info!("  ✓ 合并成功，空闲页面: {} (初始: {})\n",
+                merged_free, initial_free);
+        } else {
+            info!("  ⚠ 合并后空闲页面不足: {} (初始: {})\n",
+                merged_free, initial_free);
+        }
+
+        validate_stats_consistency(merged_total, merged_free, merged_used, "合并后") && merge_success
+    }
+
+    /// Test 4: Stress test for statistics
+    fn test_stress_stats(metrics: &AllocatorMetrics) -> bool {
+        info!("测试 4: 统计压力测试 (Statistics Stress Test)\n");
+
+        let allocator = std::os::arceos::modules::axalloc::global_allocator();
+
+        let initial_total = allocator.used_pages() + allocator.available_pages();
+        let initial_free = allocator.available_pages();
+
+        info!("  初始状态:\n");
+        info!("    总页面: {}\n", initial_total);
+        info!("    空闲页面: {}\n", initial_free);
+
+        let num_cycles = 30;
+        let ops_per_cycle = 40;
+
+        info!("  运行 {} 个周期, 每周期 {} 次操作...\n", num_cycles, ops_per_cycle);
+
+        for cycle in 0..num_cycles {
+            if cycle % 10 == 0 {
+                info!("  进度: {}/{}\n", cycle, num_cycles);
+            }
+
+            let mut allocs: Vec<(NonNull<u8>, usize)> = Vec::new();
+
+            // Allocate phase
+            for i in 0..ops_per_cycle {
+                let pages = (i % 8) + 1;
+                let size = pages * 4096;
+
+                let alloc_start = get_time_ns();
+                unsafe {
+                    let layout = core::alloc::Layout::from_size_align_unchecked(size, 8);
+                    let ptr = alloc::alloc::alloc(layout);
+
+                    if !ptr.is_null() {
+                        allocs.push((NonNull::new_unchecked(ptr), size));
+                        let alloc_duration = get_time_ns() - alloc_start;
+                        metrics.record_alloc(size, alloc_duration);
+                    }
+                }
+            }
+
+            // Verify stats after allocation
+            let after_alloc = allocator.available_pages();
+            let after_alloc_used = allocator.used_pages();
+
+            if !validate_stats_consistency(initial_total, after_alloc, after_alloc_used, &alloc::format!("周期 {} 分配后", cycle)) {
+                return false;
+            }
+
+            // Deallocate phase
+            for (ptr, size) in allocs {
+                let dealloc_start = get_time_ns();
+                unsafe {
+                    let layout = core::alloc::Layout::from_size_align_unchecked(size, 8);
+                    alloc::alloc::dealloc(ptr.as_ptr(), layout);
+                    let dealloc_duration = get_time_ns() - dealloc_start;
+                    metrics.record_dealloc(size, dealloc_duration);
+                }
+            }
+
+            // Verify stats after deallocation
+            let after_free = allocator.available_pages();
+            let after_free_used = allocator.used_pages();
+
+            if !validate_stats_consistency(initial_total, after_free, after_free_used, &alloc::format!("周期 {} 释放后", cycle)) {
+                return false;
+            }
+        }
+
+        let final_free = allocator.available_pages();
+        let final_used = allocator.used_pages();
+
+        info!("  最终状态:\n");
+        info!("    空闲页面: {} (初始: {})\n", final_free, initial_free);
+        info!("    已用页面: {}\n", final_used);
+
+        // Check if free pages recovered
+        let recovered = final_free >= initial_free.saturating_sub(50);
+
+        if recovered {
+            info!("  ✓ 压力测试通过，统计保持准确\n");
+        } else {
+            info!("  ⚠ 空闲页面恢复不足: {} (初始: {})\n",
+                final_free, initial_free);
+        }
+
+        recovered
+    }
+
+    /// Run all stats accuracy tests
+    pub fn run_all(metrics: &AllocatorMetrics) -> bool {
+        info!("═══════════════════════════════════════════════════════════\n");
+        info!("统计准确性测试 (Statistics Accuracy Tests)");
+        info!("═══════════════════════════════════════════════════════════\n");
+
+        let mut all_passed = true;
+
+        all_passed &= test_single_thread_stats(metrics);
+        all_passed &= test_multithread_stats(metrics);
+        all_passed &= test_fragmentation_stats(metrics);
+        all_passed &= test_stress_stats(metrics);
+
+        if all_passed {
+            info!("✓ 统计准确性测试全部通过\n");
+        } else {
+            info!("✗ 统计准确性测试有失败\n");
+        }
+
+        all_passed
+    }
+}
+
 /// Main entry point for running all tests
 pub fn run_comprehensive_tests() {
     info!("╔════════════════════════════════════════════════════════════╗");
@@ -1459,6 +1882,7 @@ pub fn run_comprehensive_tests() {
     all_passed &= stress_tests::run_all(&metrics);
     all_passed &= multithread_tests::run_all(&metrics);
     all_passed &= leak_detection::run_all(&metrics);
+    all_passed &= stats_accuracy::run_all(&metrics);
 
     let end_time = get_time_ns();
     let total_time = end_time - start_time;

@@ -123,6 +123,7 @@ impl SlabCache {
                 }
                 return Ok((obj_addr, 0));
             }
+            panic!("Allocation from partial slab failed despite free_count > 0, bitmap inconsistency detected");
         }
 
         // 2. Try to allocate from empty list
@@ -138,6 +139,7 @@ impl SlabCache {
                 let prealloc_bytes = self.preallocate_empty_slab(page_allocator, page_size);
                 return Ok((obj_addr, prealloc_bytes));
             }
+            panic!("Allocation from empty slab failed despite all objects being free, bitmap inconsistency detected");
         }
 
         // 3. Allocate a new node from page allocator
@@ -153,7 +155,7 @@ impl SlabCache {
         page_size: usize,
     ) -> AllocResult<(usize, usize)> {
         let object_size = self.size_class.size();
-        let bytes_needed = 512 * object_size;
+        let bytes_needed = SlabNode::MAX_OBJECTS * object_size;
         let page_count = (bytes_needed + page_size - 1) / page_size;
         let slab_bytes = page_count * page_size;
 
@@ -170,8 +172,9 @@ impl SlabCache {
             return Ok((obj_addr, slab_bytes + prealloc_bytes));
         }
 
-        page_allocator.dealloc_pages(start_addr, page_count);
-        Err(AllocError::NoMemory)
+        // This should never happen - newly initialized slab must have at least one free object
+        panic!("Failed to allocate from newly initialized slab: bitmap inconsistency or corruption detected");
+
     }
 
     /// Pre-allocate an empty slab for future allocations
@@ -186,7 +189,7 @@ impl SlabCache {
         }
 
         let object_size = self.size_class.size();
-        let bytes_needed = 512 * object_size;
+        let bytes_needed = SlabNode::MAX_OBJECTS * object_size;
         let page_count = (bytes_needed + page_size - 1) / page_size;
         let slab_bytes = page_count * page_size;
 
@@ -209,7 +212,7 @@ impl SlabCache {
         page_size: usize,
     ) -> usize {
         let object_size = self.size_class.size();
-        let bytes_needed = 512 * object_size;
+        let bytes_needed = SlabNode::MAX_OBJECTS * object_size;
         let page_count = (bytes_needed + page_size - 1) / page_size;
         let slab_bytes = page_count * page_size;
 
@@ -218,6 +221,7 @@ impl SlabCache {
         if !node.is_valid_for_size_class() {
             panic!("Invalid slab header during deallocation");
         }
+
         let was_full = node.is_full();
         let should_dealloc_slab = if let Some(obj_idx) = node.object_index_from_addr(obj_addr) {
             node.dealloc_object(obj_idx);
@@ -226,13 +230,15 @@ impl SlabCache {
             panic!("Address mismatch during deallocation");
         };
 
-        if should_dealloc_slab {
-            if was_full {
-                self.full.remove(self.size_class, slab_base);
-            } else {
-                self.partial.remove(self.size_class, slab_base);
-            }
+        // Remove slab from its current list before moving or deallocating it
+        if was_full {
+            self.full.remove(self.size_class, slab_base);
+        } else {
+            self.partial.remove(self.size_class, slab_base);
+        }
 
+        if should_dealloc_slab {
+            // Slab became empty - either deallocate or move to empty list
             if self.empty.len() >= 2 {
                 page_allocator.dealloc_pages(slab_base, page_count);
                 return slab_bytes;
@@ -242,8 +248,8 @@ impl SlabCache {
             }
         }
 
+        // Slab still has objects - if it was full, it's now partial
         if was_full {
-            self.full.remove(self.size_class, slab_base);
             self.partial.push_back(self.size_class, slab_base);
         }
 

@@ -13,7 +13,7 @@ level-1 = []
 tracking = ["dep:percpu", "dep:axbacktrace"]
 
 [dependencies]
-buddy-slab-allocator = { path = "../../allocator" , features = ["log"]}
+buddy-slab-allocator = { path = "../../allocator" , features = ["log", "tracking"]}
 axbacktrace = { workspace = true, optional = true }
 axerrno.workspace = true
 cfg-if.workspace = true

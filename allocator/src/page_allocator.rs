@@ -3,8 +3,7 @@
 use crate::buddy::{BuddyPageAllocator, DEFAULT_MAX_ORDER};
 use crate::{AllocError, AllocResult, BaseAllocator, PageAllocator};
 
-#[cfg(feature = "log")]
-use log::{debug, info, warn};
+use log::{debug, warn};
 
 /// Maximum number of buddy blocks in a single contiguous allocation
 const MAX_PARTS_PER_ALLOC: usize = 8;
@@ -118,11 +117,10 @@ impl<const PAGE_SIZE: usize> CompositePageAllocator<PAGE_SIZE> {
             for i in 0..block_count {
                 let (addr, order) = contiguous_blocks[i];
                 let block_pages = 1usize << order;
-                let block_size_mb = (block_pages * PAGE_SIZE) / (1024 * 1024);
 
                 debug!(
                     "Block {}: addr={:#x}, order={}, pages={}, size={} MB",
-                    i, addr, order, block_pages, block_size_mb
+                    i, addr, order, block_pages, (block_pages * PAGE_SIZE) / (1024 * 1024)
                 );
 
                 // Allocate this specific block
@@ -152,7 +150,7 @@ impl<const PAGE_SIZE: usize> CompositePageAllocator<PAGE_SIZE> {
                 num_pages
             );
 
-            info!("Contiguous block allocation succeeded: base_addr={:#x}, pages={}, parts={}, actual_pages={}",
+            debug!("Contiguous block allocation succeeded: base_addr={:#x}, pages={}, parts={}, actual_pages={}",
                   min_addr, num_pages, block_count, actual_pages);
 
             return Some(min_addr);
@@ -206,17 +204,10 @@ impl<const PAGE_SIZE: usize> PageAllocator for CompositePageAllocator<PAGE_SIZE>
             }
         };
 
-        // If buddy allocated exactly what was requested, no overflow handling needed
-        if buddy_pages == num_pages {
-            return Ok(base_addr);
-        }
-
         Ok(base_addr)
     }
 
     fn dealloc_pages(&mut self, pos: usize, num_pages: usize) {
-        debug!("Deallocating pages at {:#x}, count={}", pos, num_pages);
-
         if num_pages == 0 {
             return;
         }

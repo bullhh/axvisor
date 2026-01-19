@@ -3,7 +3,6 @@
 //! This module defines the SlabNode structure which manages exactly 512 objects
 //! using a fixed bitmap.
 
-#[cfg(feature = "log")]
 use log::error;
 
 pub use super::slab_byte_allocator::SizeClass;
@@ -18,10 +17,11 @@ pub(crate) struct SlabHeader {
     slab_bytes: usize,
     prev: usize,
     next: usize,
-    free_bitmap: [u64; 8],
+    free_bitmap: [u64; FREE_BITMAP_WORDS],
 }
 
 const SLAB_HEADER_MAGIC: u32 = 0x534c_4142;
+const FREE_BITMAP_WORDS: usize = 8;
 
 #[derive(Debug, Clone, Copy)]
 pub struct SlabNode {
@@ -30,7 +30,7 @@ pub struct SlabNode {
 }
 
 impl SlabNode {
-    pub const MAX_OBJECTS: usize = 512;
+    pub const MAX_OBJECTS: usize = FREE_BITMAP_WORDS * 64;
 
     pub const fn new(addr: usize, size_class: SizeClass) -> Self {
         Self { addr, size_class }
@@ -66,11 +66,11 @@ impl SlabNode {
             return;
         }
 
-        let mut free_bitmap = [u64::MAX; 8];
+        let mut free_bitmap = [u64::MAX; FREE_BITMAP_WORDS];
         if object_count < Self::MAX_OBJECTS {
             let full_words = object_count / 64;
             let rem_bits = object_count % 64;
-            for i in 0..8 {
+            for i in 0..FREE_BITMAP_WORDS {
                 if i < full_words {
                     continue;
                 }
@@ -228,7 +228,7 @@ mod tests {
 
         assert!(node.is_empty());
         assert!(!node.is_full());
-        assert!(node.free_count() <= 512);
+        assert!(node.free_count() <= SlabNode::MAX_OBJECTS as u32);
         assert_eq!(node.in_use(), 0);
 
         // Test allocation
@@ -269,12 +269,12 @@ mod tests {
     #[test]
     fn test_page_count() {
         let node8 = SlabNode::new(0, SizeClass::Bytes8);
-        assert_eq!(node8.page_count(4096), 1); // 512 * 8 = 4096
+        assert_eq!(node8.page_count(4096), 1); // SlabNode::MAX_OBJECTS * 8 = 4096
 
         let node64 = SlabNode::new(0, SizeClass::Bytes64);
-        assert_eq!(node64.page_count(4096), 8); // 512 * 64 = 32768
+        assert_eq!(node64.page_count(4096), 8); // SlabNode::MAX_OBJECTS * 64 = 32768
 
         let node2048 = SlabNode::new(0, SizeClass::Bytes2048);
-        assert_eq!(node2048.page_count(4096), 256); // 512 * 2048 = 1,048,576
+        assert_eq!(node2048.page_count(4096), 256); // SlabNode::MAX_OBJECTS * 2048 = 1,048,576
     }
 }

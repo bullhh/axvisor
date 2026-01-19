@@ -16,8 +16,7 @@ use super::page_allocator::CompositePageAllocator;
 use super::slab::{PageAllocatorForSlab, SlabByteAllocator};
 use kspin::SpinNoIrq;
 
-#[cfg(feature = "log")]
-use log::{error, info};
+use log::{error, warn};
 
 const MIN_HEAP_SIZE: usize = 0x8000; // 32KB minimum heap
 
@@ -76,20 +75,11 @@ impl<const PAGE_SIZE: usize> GlobalAllocator<PAGE_SIZE> {
         if size <= MIN_HEAP_SIZE {
             return Err(AllocError::InvalidParam);
         }
-        info!(
-            "global allocator: Initialize with region [{:#x}, {:#x})",
-            start_vaddr,
-            start_vaddr + size
-        );
-        // Initialize composite allocator first
+
         self.page_allocator.lock().init(start_vaddr, size);
-        info!("global allocator: Composite page allocator initialized");
 
-        // Initialize slab allocator's global pool
         self.slab_allocator.lock().init();
-        info!("global allocator: Slab node pool initialized");
 
-        // Set up page allocator for slab
         {
             let page_alloc_ptr =
                 &mut *self.page_allocator.lock() as *mut CompositePageAllocator<PAGE_SIZE>;
@@ -97,7 +87,6 @@ impl<const PAGE_SIZE: usize> GlobalAllocator<PAGE_SIZE> {
                 .lock()
                 .set_page_allocator(page_alloc_ptr as *mut dyn PageAllocatorForSlab);
         }
-        info!("global allocator: Slab allocator initialized");
 
         // Update statistics
         #[cfg(feature = "tracking")]
@@ -110,7 +99,6 @@ impl<const PAGE_SIZE: usize> GlobalAllocator<PAGE_SIZE> {
         }
 
         self.initialized.store(true, Ordering::SeqCst);
-        info!("global allocator: Initialized");
         Ok(())
     }
 
@@ -203,6 +191,7 @@ impl<const PAGE_SIZE: usize> GlobalAllocator<PAGE_SIZE> {
     /// Deallocate memory
     pub fn dealloc(&self, ptr: NonNull<u8>, layout: Layout) {
         if !self.initialized.load(Ordering::SeqCst) {
+            error!("global allocator: Deallocating memory before initializing");
             return;
         }
 
@@ -239,7 +228,6 @@ impl<const PAGE_SIZE: usize> GlobalAllocator<PAGE_SIZE> {
         if !self.initialized.load(Ordering::SeqCst) {
             return;
         }
-        // info!("global allocator: Deallocating {} pages at address {:#x}", num_pages, pos);
 
         PageAllocator::dealloc_pages(&mut *self.page_allocator.lock(), pos, num_pages);
 
@@ -372,6 +360,7 @@ impl<const PAGE_SIZE: usize> PageAllocator for GlobalAllocator<PAGE_SIZE> {
 unsafe impl<const PAGE_SIZE: usize> core::alloc::GlobalAlloc for GlobalAllocator<PAGE_SIZE> {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         if !self.initialized.load(Ordering::SeqCst) {
+            warn!("global allocator: Allocator not initialized");
             return core::ptr::null_mut();
         }
 
@@ -386,7 +375,7 @@ unsafe impl<const PAGE_SIZE: usize> core::alloc::GlobalAlloc for GlobalAllocator
                     return ptr.as_ptr();
                 }
                 Err(e) => {
-                    info!(
+                    warn!(
                         "global allocator: Slab allocator failed for layout {:?}, error: {:?}, falling back to page allocator",
                         layout, e
                     );

@@ -5,11 +5,10 @@
 
 use crate::{AllocError, AllocResult, BaseAllocator, PageAllocator};
 
-#[cfg(feature = "log")]
 use log::{debug, error, info, warn};
 
 use super::{
-    buddy_block::MAX_ZONES,
+    buddy_block::{MAX_ZONES, ZoneInfo},
     buddy_set::BuddySet,
     global_node_pool::GlobalNodePool,
 };
@@ -52,12 +51,6 @@ impl<const PAGE_SIZE: usize> BuddyPageAllocator<PAGE_SIZE> {
 
     /// Bootstrap allocator with initial memory region
     pub fn bootstrap(&mut self, base_addr: usize, size: usize) {
-        info!(
-            "buddy allocator: Bootstrap with region [{:#x}, {:#x})",
-            base_addr,
-            base_addr + size
-        );
-
         if self.num_zones >= MAX_ZONES {
             panic!("Cannot bootstrap: maximum zones reached");
         }
@@ -145,8 +138,7 @@ impl<const PAGE_SIZE: usize> BuddyPageAllocator<PAGE_SIZE> {
         for i in 0..self.num_zones {
             match self.zones[i].alloc_pages(&mut self.global_node_pool, expand_pages, PAGE_SIZE) {
                 Ok(addr) => {
-                    #[cfg(feature = "log")]
-                    info!(
+                    debug!(
                         "buddy allocator: expanding node pool from zone {}: free_nodes={} region=[{:#x}, {:#x})",
                         i,
                         free_nodes,
@@ -162,7 +154,6 @@ impl<const PAGE_SIZE: usize> BuddyPageAllocator<PAGE_SIZE> {
             }
         }
 
-        #[cfg(feature = "log")]
         warn!(
             "buddy allocator: failed to expand node pool at low water: free_nodes={} tried {} zones",
             free_nodes,
@@ -172,12 +163,6 @@ impl<const PAGE_SIZE: usize> BuddyPageAllocator<PAGE_SIZE> {
 
     /// Add a new memory region as a new zone
     pub fn add_memory_region(&mut self, start: usize, size: usize) -> AllocResult<()> {
-        info!(
-            "buddy allocator: Adding region [{:#x}, {:#x})",
-            start,
-            start + size
-        );
-
         if self.num_zones >= MAX_ZONES {
             error!(
                 "buddy allocator: Cannot add region: maximum zones ({}) reached",

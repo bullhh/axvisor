@@ -3,9 +3,6 @@
 //! Provides a single pool of list nodes shared across all zones and orders.
 //! This eliminates the need for per-zone list pools and improves memory efficiency.
 
-#[cfg(feature = "log")]
-use log::error;
-
 use super::buddy_block::BuddyBlock;
 
 /// Simple linked list node used by the global node pool
