@@ -162,9 +162,9 @@ const fn is_aligned(base_addr: usize, align: usize) -> bool {
 
 // Export our allocator implementations
 pub mod buddy;
-pub use buddy::{BuddyPageAllocator, DEFAULT_MAX_ORDER, MAX_ZONES};
 #[cfg(feature = "tracking")]
 pub use buddy::BuddyStats;
+pub use buddy::{BuddyPageAllocator, DEFAULT_MAX_ORDER, MAX_ZONES};
 
 pub mod page_allocator;
 pub use page_allocator::CompositePageAllocator;

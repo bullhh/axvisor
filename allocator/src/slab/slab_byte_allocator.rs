@@ -137,8 +137,7 @@ impl<const PAGE_SIZE: usize> SlabByteAllocator<PAGE_SIZE> {
     }
 
     /// Initialize the allocator
-    pub fn init(&mut self) {
-    }
+    pub fn init(&mut self) {}
 
     pub fn set_page_allocator(&mut self, page_allocator: *mut dyn PageAllocatorForSlab) {
         self.page_allocator = Some(page_allocator);
@@ -162,8 +161,7 @@ impl<const PAGE_SIZE: usize> ByteAllocator for SlabByteAllocator<PAGE_SIZE> {
         let page_allocator = unsafe { &mut *page_allocator_ptr };
         let cache = &mut self.caches[size_class.to_index()];
 
-        let (obj_addr, page_bytes) =
-            cache.alloc_object(page_allocator, PAGE_SIZE)?;
+        let (obj_addr, page_bytes) = cache.alloc_object(page_allocator, PAGE_SIZE)?;
         self.allocated_bytes += layout.size().max(layout.align());
         self.total_bytes += page_bytes;
 
@@ -181,8 +179,7 @@ impl<const PAGE_SIZE: usize> ByteAllocator for SlabByteAllocator<PAGE_SIZE> {
         let page_allocator = unsafe { &mut *page_allocator_ptr };
         let cache = &mut self.caches[size_class.to_index()];
 
-        let freed_bytes =
-            cache.dealloc_object(obj_addr, page_allocator, PAGE_SIZE);
+        let freed_bytes = cache.dealloc_object(obj_addr, page_allocator, PAGE_SIZE);
         self.allocated_bytes = self
             .allocated_bytes
             .saturating_sub(layout.size().max(layout.align()));

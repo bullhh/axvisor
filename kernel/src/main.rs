@@ -37,7 +37,5 @@ fn main() {
 
     info!("[OK] Default guest initialized");
 
-
-
     shell::console_init();
 }

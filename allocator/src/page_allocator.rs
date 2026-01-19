@@ -8,7 +8,6 @@ use log::{debug, warn};
 /// Maximum number of buddy blocks in a single contiguous allocation
 const MAX_PARTS_PER_ALLOC: usize = 8;
 
-
 pub struct CompositePageAllocator<const PAGE_SIZE: usize = { crate::DEFAULT_PAGE_SIZE }> {
     /// Underlying buddy allocator for standard allocations
     buddy: BuddyPageAllocator<PAGE_SIZE>,
@@ -120,7 +119,11 @@ impl<const PAGE_SIZE: usize> CompositePageAllocator<PAGE_SIZE> {
 
                 debug!(
                     "Block {}: addr={:#x}, order={}, pages={}, size={} MB",
-                    i, addr, order, block_pages, (block_pages * PAGE_SIZE) / (1024 * 1024)
+                    i,
+                    addr,
+                    order,
+                    block_pages,
+                    (block_pages * PAGE_SIZE) / (1024 * 1024)
                 );
 
                 // Allocate this specific block

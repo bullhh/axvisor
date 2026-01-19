@@ -192,12 +192,20 @@ impl SlabNode {
 
     pub fn prev(&self) -> Option<usize> {
         let prev = self.header().prev;
-        if prev == 0 { None } else { Some(prev) }
+        if prev == 0 {
+            None
+        } else {
+            Some(prev)
+        }
     }
 
     pub fn next(&self) -> Option<usize> {
         let next = self.header().next;
-        if next == 0 { None } else { Some(next) }
+        if next == 0 {
+            None
+        } else {
+            Some(next)
+        }
     }
 
     pub fn set_prev(&mut self, prev: Option<usize>) {
@@ -235,7 +243,10 @@ mod tests {
         let obj_idx = node.alloc_object().unwrap();
         assert_eq!(node.object_addr(obj_idx), node.object_base());
         assert_eq!(node.in_use(), 1);
-        assert_eq!(node.free_count(), (node.header().object_count as u32).saturating_sub(1));
+        assert_eq!(
+            node.free_count(),
+            (node.header().object_count as u32).saturating_sub(1)
+        );
 
         // Test deallocation
         node.dealloc_object(obj_idx);

@@ -8,7 +8,7 @@ use crate::{AllocError, AllocResult, BaseAllocator, PageAllocator};
 use log::{debug, error, info, warn};
 
 use super::{
-    buddy_block::{MAX_ZONES, ZoneInfo},
+    buddy_block::{ZoneInfo, MAX_ZONES},
     buddy_set::BuddySet,
     global_node_pool::GlobalNodePool,
 };
@@ -263,11 +263,16 @@ impl<const PAGE_SIZE: usize> BuddyPageAllocator<PAGE_SIZE> {
             let zone = &self.zones[i];
             let zone_info = zone.zone_info();
             info!("Zone {}:", i);
-            info!("  Address range: [{:#x}, {:#x})", zone_info.start_addr, zone_info.end_addr);
+            info!(
+                "  Address range: [{:#x}, {:#x})",
+                zone_info.start_addr, zone_info.end_addr
+            );
             info!("  Total pages: {}", zone_info.total_pages);
-            info!("  Total size: {:#x} ({} MB)",
-                  zone_info.total_pages * PAGE_SIZE,
-                  (zone_info.total_pages * PAGE_SIZE) / (1024 * 1024));
+            info!(
+                "  Total size: {:#x} ({} MB)",
+                zone_info.total_pages * PAGE_SIZE,
+                (zone_info.total_pages * PAGE_SIZE) / (1024 * 1024)
+            );
             info!("  Free blocks distribution:");
 
             // Print block distribution for each order
@@ -275,8 +280,13 @@ impl<const PAGE_SIZE: usize> BuddyPageAllocator<PAGE_SIZE> {
                 let block_count = zone.get_order_block_count(order);
                 if block_count > 0 {
                     let block_size = (1 << order) * PAGE_SIZE;
-                    info!("    Order {}: {} blocks (size {} bytes each, total {:#x})",
-                          order, block_count, block_size, block_count * block_size);
+                    info!(
+                        "    Order {}: {} blocks (size {} bytes each, total {:#x})",
+                        order,
+                        block_count,
+                        block_size,
+                        block_count * block_size
+                    );
                 }
             }
             info!("");

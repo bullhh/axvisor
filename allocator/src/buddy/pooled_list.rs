@@ -219,10 +219,7 @@ impl PooledLinkedList {
         if let Some(prev) = prev_idx {
             if let Some(prev_node) = pool.get_node(prev) {
                 if prev_node.next != Some(node_idx) {
-                    warn!(
-                        "prev_idx {} does not point to node_idx {}",
-                        prev, node_idx
-                    );
+                    warn!("prev_idx {} does not point to node_idx {}", prev, node_idx);
                     return false;
                 }
             } else {
@@ -231,10 +228,7 @@ impl PooledLinkedList {
             }
         } else if self.head != Some(node_idx) {
             // prev_idx is None means node should be head
-            warn!(
-                "prev_idx is None but node_idx {} is not head",
-                node_idx
-            );
+            warn!("prev_idx is None but node_idx {} is not head", node_idx);
             return false;
         }
 

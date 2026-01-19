@@ -17,14 +17,12 @@ use alloc::vec::Vec;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
-
-
 /// Allocation size category
 #[derive(Clone, Copy, Debug)]
 pub enum SizeCategory {
-    Small,   // < 4KB
-    Medium,  // 4KB - 1MB
-    Large,   // > 1MB
+    Small,  // < 4KB
+    Medium, // 4KB - 1MB
+    Large,  // > 1MB
 }
 
 impl SizeCategory {
@@ -87,7 +85,8 @@ impl AllocatorMetrics {
 
     pub fn record_alloc(&self, size: usize, duration_ns: u64) {
         self.total_allocations.fetch_add(1, Ordering::Relaxed);
-        self.total_alloc_time_ns.fetch_add(duration_ns, Ordering::Relaxed);
+        self.total_alloc_time_ns
+            .fetch_add(duration_ns, Ordering::Relaxed);
 
         // Update min/max
         let mut min_time = self.min_alloc_time_ns.load(Ordering::Relaxed);
@@ -96,8 +95,10 @@ impl AllocatorMetrics {
                 break;
             }
             match self.min_alloc_time_ns.compare_exchange_weak(
-                min_time, duration_ns,
-                Ordering::Relaxed, Ordering::Relaxed
+                min_time,
+                duration_ns,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
             ) {
                 Ok(_) => break,
                 Err(new) => min_time = new,
@@ -110,8 +111,10 @@ impl AllocatorMetrics {
                 break;
             }
             match self.max_alloc_time_ns.compare_exchange_weak(
-                max_time, duration_ns,
-                Ordering::Relaxed, Ordering::Relaxed
+                max_time,
+                duration_ns,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
             ) {
                 Ok(_) => break,
                 Err(new) => max_time = new,
@@ -119,7 +122,9 @@ impl AllocatorMetrics {
         }
 
         // Update current and peak bytes
-        let old_bytes = self.current_allocated_bytes.fetch_add(size, Ordering::Relaxed);
+        let old_bytes = self
+            .current_allocated_bytes
+            .fetch_add(size, Ordering::Relaxed);
         let new_bytes = old_bytes + size;
 
         let mut peak = self.peak_allocated_bytes.load(Ordering::Relaxed);
@@ -128,8 +133,10 @@ impl AllocatorMetrics {
                 break;
             }
             match self.peak_allocated_bytes.compare_exchange_weak(
-                peak, new_bytes,
-                Ordering::Relaxed, Ordering::Relaxed
+                peak,
+                new_bytes,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
             ) {
                 Ok(_) => break,
                 Err(new) => peak = new,
@@ -146,8 +153,10 @@ impl AllocatorMetrics {
 
     pub fn record_dealloc(&self, size: usize, duration_ns: u64) {
         self.total_deallocations.fetch_add(1, Ordering::Relaxed);
-        self.total_dealloc_time_ns.fetch_add(duration_ns, Ordering::Relaxed);
-        self.current_allocated_bytes.fetch_sub(size, Ordering::Relaxed);
+        self.total_dealloc_time_ns
+            .fetch_add(duration_ns, Ordering::Relaxed);
+        self.current_allocated_bytes
+            .fetch_sub(size, Ordering::Relaxed);
 
         // Update min/max dealloc time
         let mut min_time = self.min_dealloc_time_ns.load(Ordering::Relaxed);
@@ -156,8 +165,10 @@ impl AllocatorMetrics {
                 break;
             }
             match self.min_dealloc_time_ns.compare_exchange_weak(
-                min_time, duration_ns,
-                Ordering::Relaxed, Ordering::Relaxed
+                min_time,
+                duration_ns,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
             ) {
                 Ok(_) => break,
                 Err(new) => min_time = new,
@@ -170,8 +181,10 @@ impl AllocatorMetrics {
                 break;
             }
             match self.max_dealloc_time_ns.compare_exchange_weak(
-                max_time, duration_ns,
-                Ordering::Relaxed, Ordering::Relaxed
+                max_time,
+                duration_ns,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
             ) {
                 Ok(_) => break,
                 Err(new) => max_time = new,
@@ -219,8 +232,14 @@ impl AllocatorMetrics {
         info!("═══════════════════════════════════════════════════════════");
 
         info!("分配计数:");
-        info!("  总分配: {}", self.total_allocations.load(Ordering::Relaxed));
-        info!("  总释放: {}", self.total_deallocations.load(Ordering::Relaxed));
+        info!(
+            "  总分配: {}",
+            self.total_allocations.load(Ordering::Relaxed)
+        );
+        info!(
+            "  总释放: {}",
+            self.total_deallocations.load(Ordering::Relaxed)
+        );
         let leaks = self.total_allocations.load(Ordering::Relaxed)
             - self.total_deallocations.load(Ordering::Relaxed);
         info!("  泄漏: {}", leaks);
@@ -231,35 +250,70 @@ impl AllocatorMetrics {
         }
 
         info!("\n内存分类:");
-        info!("  小对象 (<4KB):    {}", self.small_allocs.load(Ordering::Relaxed));
-        info!("  中对象 (4KB-1MB): {}", self.medium_allocs.load(Ordering::Relaxed));
-        info!("  大对象 (>1MB):    {}", self.large_allocs.load(Ordering::Relaxed));
+        info!(
+            "  小对象 (<4KB):    {}",
+            self.small_allocs.load(Ordering::Relaxed)
+        );
+        info!(
+            "  中对象 (4KB-1MB): {}",
+            self.medium_allocs.load(Ordering::Relaxed)
+        );
+        info!(
+            "  大对象 (>1MB):    {}",
+            self.large_allocs.load(Ordering::Relaxed)
+        );
 
         info!("\n性能指标:");
         // 分配性能
         let avg_alloc_latency = self.calculate_avg_alloc_latency();
         info!("  分配性能:");
         info!("    平均延迟: {:.2} ns", avg_alloc_latency);
-        info!("    最小延迟: {} ns", self.min_alloc_time_ns.load(Ordering::Relaxed));
-        info!("    最大延迟: {} ns", self.max_alloc_time_ns.load(Ordering::Relaxed));
-        info!("    总时间: {} ns", self.total_alloc_time_ns.load(Ordering::Relaxed));
-        info!("    操作数: {}", self.total_allocations.load(Ordering::Relaxed));
-        
+        info!(
+            "    最小延迟: {} ns",
+            self.min_alloc_time_ns.load(Ordering::Relaxed)
+        );
+        info!(
+            "    最大延迟: {} ns",
+            self.max_alloc_time_ns.load(Ordering::Relaxed)
+        );
+        info!(
+            "    总时间: {} ns",
+            self.total_alloc_time_ns.load(Ordering::Relaxed)
+        );
+        info!(
+            "    操作数: {}",
+            self.total_allocations.load(Ordering::Relaxed)
+        );
+
         // 释放性能
         let avg_dealloc_latency = self.calculate_avg_dealloc_latency();
         info!("  释放性能:");
         info!("    平均延迟: {:.2} ns", avg_dealloc_latency);
-        info!("    最小延迟: {} ns", self.min_dealloc_time_ns.load(Ordering::Relaxed));
-        info!("    最大延迟: {} ns", self.max_dealloc_time_ns.load(Ordering::Relaxed));
-        info!("    总时间: {} ns", self.total_dealloc_time_ns.load(Ordering::Relaxed));
-        info!("    操作数: {}", self.total_deallocations.load(Ordering::Relaxed));
+        info!(
+            "    最小延迟: {} ns",
+            self.min_dealloc_time_ns.load(Ordering::Relaxed)
+        );
+        info!(
+            "    最大延迟: {} ns",
+            self.max_dealloc_time_ns.load(Ordering::Relaxed)
+        );
+        info!(
+            "    总时间: {} ns",
+            self.total_dealloc_time_ns.load(Ordering::Relaxed)
+        );
+        info!(
+            "    操作数: {}",
+            self.total_deallocations.load(Ordering::Relaxed)
+        );
 
         info!("\n内存使用:");
-        info!("  峰值分配: {} bytes ({} MB)",
+        info!(
+            "  峰值分配: {} bytes ({} MB)",
             self.peak_allocated_bytes.load(Ordering::Relaxed),
             self.peak_allocated_bytes.load(Ordering::Relaxed) / 1024 / 1024
         );
-        info!("  当前分配: {} bytes",
+        info!(
+            "  当前分配: {} bytes",
             self.current_allocated_bytes.load(Ordering::Relaxed)
         );
 
@@ -499,10 +553,10 @@ pub mod performance_tests {
         test_mixed_pattern(metrics);
 
         // 新增：突出分配器差异的测试
-        test_fixed_size_small_objects(metrics);  // Slab 优势测试
-        test_random_size_allocation(metrics);   // TLSF 优势测试
-        test_fragmentation_resistance(metrics);  // 碎片化抗性测试
-        test_realistic_workload(metrics);       // 真实负载模拟
+        test_fixed_size_small_objects(metrics); // Slab 优势测试
+        test_random_size_allocation(metrics); // TLSF 优势测试
+        test_fragmentation_resistance(metrics); // 碎片化抗性测试
+        test_realistic_workload(metrics); // 真实负载模拟
 
         true
     }
@@ -681,19 +735,33 @@ pub mod performance_tests {
             }
             let dealloc_end_time = get_time_ns();
             let dealloc_time_ns = dealloc_end_time - dealloc_start_time;
-            let dealloc_throughput = (iterations as f64) / (dealloc_time_ns as f64 / 1_000_000_000.0);
+            let dealloc_throughput =
+                (iterations as f64) / (dealloc_time_ns as f64 / 1_000_000_000.0);
 
             let total_time_ns = alloc_time_ns + dealloc_time_ns;
-            let total_throughput = (iterations as f64 * 2.0) / (total_time_ns as f64 / 1_000_000_000.0);
+            let total_throughput =
+                (iterations as f64 * 2.0) / (total_time_ns as f64 / 1_000_000_000.0);
 
             info!("  大小 {:>4} 字节:", size);
-            info!("    分配: {:.2} M ops/s, 耗时 {}", 
-                alloc_throughput / 1_000_000.0, format_time_ns(alloc_time_ns));
-            info!("    释放: {:.2} M ops/s, 耗时 {}", 
-                dealloc_throughput / 1_000_000.0, format_time_ns(dealloc_time_ns));
-            info!("    总计: {:.2} M ops/s, 耗时 {}", 
-                total_throughput / 1_000_000.0, format_time_ns(total_time_ns));
-            info!("    分配/释放时间比例: {:.2}:1", alloc_time_ns as f64 / dealloc_time_ns.max(1) as f64);
+            info!(
+                "    分配: {:.2} M ops/s, 耗时 {}",
+                alloc_throughput / 1_000_000.0,
+                format_time_ns(alloc_time_ns)
+            );
+            info!(
+                "    释放: {:.2} M ops/s, 耗时 {}",
+                dealloc_throughput / 1_000_000.0,
+                format_time_ns(dealloc_time_ns)
+            );
+            info!(
+                "    总计: {:.2} M ops/s, 耗时 {}",
+                total_throughput / 1_000_000.0,
+                format_time_ns(total_time_ns)
+            );
+            info!(
+                "    分配/释放时间比例: {:.2}:1",
+                alloc_time_ns as f64 / dealloc_time_ns.max(1) as f64
+            );
         }
 
         info!("  ✓ 固定大小小对象测试完成\n");
@@ -831,8 +899,13 @@ pub mod performance_tests {
 
             if phase > 0 {
                 let success_rate = (retry_allocs * 100) / (retry_allocs + retry_failed).max(1);
-                info!("  阶段 {}: 重分配成功率 {}/{} ({}%)",
-                    phase, retry_allocs, retry_allocs + retry_failed, success_rate);
+                info!(
+                    "  阶段 {}: 重分配成功率 {}/{} ({}%)",
+                    phase,
+                    retry_allocs,
+                    retry_allocs + retry_failed,
+                    success_rate
+                );
             }
 
             // 清理剩余对象
@@ -849,7 +922,8 @@ pub mod performance_tests {
 
         let end_time = get_time_ns();
         let total_time_ns = end_time - start_time;
-        let overall_success_rate = (total_allocations * 100) / (total_allocations + failed_allocations).max(1);
+        let overall_success_rate =
+            (total_allocations * 100) / (total_allocations + failed_allocations).max(1);
 
         info!("  总分配数: {}", total_allocations);
         info!("  失败分配数: {}", failed_allocations);
@@ -926,8 +1000,7 @@ pub mod performance_tests {
             if i % 20000 == 0 && i > 0 {
                 let elapsed = (get_time_ns() - start_time) / 1_000_000;
                 let ops_per_sec = (i * 1000) / elapsed.max(1);
-                info!("  进度: {}/{} ({} ops/s)",
-                    i, total_ops, ops_per_sec);
+                info!("  进度: {}/{} ({} ops/s)", i, total_ops, ops_per_sec);
             }
         }
 
@@ -1148,7 +1221,11 @@ pub mod stress_tests {
                 }
             }
         }
-        info!("    非 2 的幂次: {}/{} 成功", success_count, non_pow2_sizes.len());
+        info!(
+            "    非 2 的幂次: {}/{} 成功",
+            success_count,
+            non_pow2_sizes.len()
+        );
 
         info!("  ✓ 边界条件测试完成\n");
     }
@@ -1178,7 +1255,10 @@ pub mod multithread_tests {
         let num_threads = cpu_count.max(2);
         let ops_per_thread = 1000; // 减少操作次数
 
-        info!("  使用 {} 个线程, 每线程 {} 次操作", num_threads, ops_per_thread);
+        info!(
+            "  使用 {} 个线程, 每线程 {} 次操作",
+            num_threads, ops_per_thread
+        );
 
         let start_time = get_time_ns();
 
@@ -1217,7 +1297,8 @@ pub mod multithread_tests {
 
         info!("  总操作: {}", total_ops);
         info!("  总耗时: {}", format_time_ns(total_time_ns));
-        info!("  并发吞吐量: {:.2} M ops/s",
+        info!(
+            "  并发吞吐量: {:.2} M ops/s",
             (total_ops as f64 * 1e9) / total_time_ns as f64 / 1_000_000.0
         );
         info!("  ✓ 并发分配测试完成\n");
@@ -1258,7 +1339,8 @@ pub mod multithread_tests {
 
         info!("  总操作: {}", total_ops);
         info!("  总耗时: {}", format_time_ns(total_time_ns));
-        info!("  竞争吞吐量: {:.2} M ops/s",
+        info!(
+            "  竞争吞吐量: {:.2} M ops/s",
             (total_ops as f64 * 1e9) / total_time_ns as f64 / 1_000_000.0
         );
         info!("  ✓ 并发竞争测试完成\n");
@@ -1311,7 +1393,10 @@ pub mod multithread_tests {
         let end_time = get_time_ns();
         let total_time_ns = end_time - start_time;
 
-        info!("  长时间并发运行完成, 总耗时: {}\n", format_time_ns(total_time_ns));
+        info!(
+            "  长时间并发运行完成, 总耗时: {}\n",
+            format_time_ns(total_time_ns)
+        );
     }
 }
 
@@ -1373,8 +1458,12 @@ pub mod leak_detection {
             let delta_deallocs = final_deallocs - initial_deallocs;
 
             if delta_allocs != delta_deallocs {
-                info!("    ✗ 轮 {} 不平衡: 分配 {} vs 释放 {}",
-                    round + 1, delta_allocs, delta_deallocs);
+                info!(
+                    "    ✗ 轮 {} 不平衡: 分配 {} vs 释放 {}",
+                    round + 1,
+                    delta_allocs,
+                    delta_deallocs
+                );
                 return false;
             }
         }
@@ -1421,7 +1510,11 @@ pub mod leak_detection {
             }
 
             let cycle_end = get_time_ns();
-            info!("    周期 {} 耗时 {}", cycle + 1, format_time_ns(cycle_end - cycle_start));
+            info!(
+                "    周期 {} 耗时 {}",
+                cycle + 1,
+                format_time_ns(cycle_end - cycle_start)
+            );
         }
 
         info!("  ✓ 重复测试循环完成\n");
@@ -1446,7 +1539,10 @@ pub mod stats_accuracy {
         let calculated_used = total_pages.saturating_sub(free_pages);
         if used_pages != calculated_used {
             info!("    ✗ {} 统计不一致:\n", test_name);
-            info!("       已用页面: {} (预期: {})\n", used_pages, calculated_used);
+            info!(
+                "       已用页面: {} (预期: {})\n",
+                used_pages, calculated_used
+            );
             info!("       总页面: {}, 空闲页面: {}\n", total_pages, free_pages);
             return false;
         }
@@ -1506,10 +1602,16 @@ pub mod stats_accuracy {
 
         info!("  分配后状态:\n");
         info!("    总页面: {}\n", alloc_total);
-        info!("    空闲页面: {} (减少: {})\n",
-            alloc_free, initial_free.saturating_sub(alloc_free));
-        info!("    已用页面: {} (增加: {})\n",
-            alloc_used, alloc_used.saturating_sub(initial_used));
+        info!(
+            "    空闲页面: {} (减少: {})\n",
+            alloc_free,
+            initial_free.saturating_sub(alloc_free)
+        );
+        info!(
+            "    已用页面: {} (增加: {})\n",
+            alloc_used,
+            alloc_used.saturating_sub(initial_used)
+        );
 
         if !validate_stats_consistency(alloc_total, alloc_free, alloc_used, "分配后") {
             return false;
@@ -1534,17 +1636,25 @@ pub mod stats_accuracy {
 
         info!("  释放后状态:\n");
         info!("    总页面: {}\n", final_total);
-        info!("    空闲页面: {} (恢复: {})\n",
-            final_free, final_free.saturating_sub(initial_free));
-        info!("    已用页面: {} (减少: {})\n",
-            final_used, initial_used.saturating_sub(final_used));
+        info!(
+            "    空闲页面: {} (恢复: {})\n",
+            final_free,
+            final_free.saturating_sub(initial_free)
+        );
+        info!(
+            "    已用页面: {} (减少: {})\n",
+            final_used,
+            initial_used.saturating_sub(final_used)
+        );
 
         // Allow small variance due to fragmentation
         let free_variance = if final_free >= initial_free.saturating_sub(10) {
             true
         } else {
-            info!("    ⚠ 空闲页面未完全恢复: {} (初始: {})\n",
-                final_free, initial_free);
+            info!(
+                "    ⚠ 空闲页面未完全恢复: {} (初始: {})\n",
+                final_free, initial_free
+            );
             false
         };
 
@@ -1571,8 +1681,10 @@ pub mod stats_accuracy {
         let allocs_per_thread = 50;
         let total_allocs = num_threads * allocs_per_thread;
 
-        info!("  模拟 {} 个并发线程, 每线程 {} 次分配 (共 {} 次)...\n",
-            num_threads, allocs_per_thread, total_allocs);
+        info!(
+            "  模拟 {} 个并发线程, 每线程 {} 次分配 (共 {} 次)...\n",
+            num_threads, allocs_per_thread, total_allocs
+        );
 
         let mut all_allocs: Vec<(NonNull<u8>, usize)> = Vec::new();
         let allocation_sizes = [1, 2, 4, 8, 16, 32, 64, 128]; // Pages
@@ -1604,13 +1716,24 @@ pub mod stats_accuracy {
 
         info!("  并发分配后状态:\n");
         info!("    总页面: {}\n", after_alloc_total);
-        info!("    空闲页面: {} (减少: {})\n",
-            after_alloc_free, initial_free.saturating_sub(after_alloc_free));
-        info!("    已用页面: {} (增加: {})\n",
-            after_alloc_used, after_alloc_used.saturating_sub(initial_used));
+        info!(
+            "    空闲页面: {} (减少: {})\n",
+            after_alloc_free,
+            initial_free.saturating_sub(after_alloc_free)
+        );
+        info!(
+            "    已用页面: {} (增加: {})\n",
+            after_alloc_used,
+            after_alloc_used.saturating_sub(initial_used)
+        );
         info!("    成功分配数: {}\n", all_allocs.len());
 
-        if !validate_stats_consistency(after_alloc_total, after_alloc_free, after_alloc_used, "并发分配后") {
+        if !validate_stats_consistency(
+            after_alloc_total,
+            after_alloc_free,
+            after_alloc_used,
+            "并发分配后",
+        ) {
             return false;
         }
 
@@ -1641,16 +1764,21 @@ pub mod stats_accuracy {
 
         info!("  最终状态:\n");
         info!("    总页面: {}\n", final_total);
-        info!("    空闲页面: {} (恢复: {})\n",
-            final_free, final_free.saturating_sub(initial_free));
+        info!(
+            "    空闲页面: {} (恢复: {})\n",
+            final_free,
+            final_free.saturating_sub(initial_free)
+        );
         info!("    已用页面: {}\n", final_used);
 
         // Allow larger variance due to fragmentation from random deallocation
         if final_free >= initial_free.saturating_sub(20) {
             validate_stats_consistency(final_total, final_free, final_used, "最终")
         } else {
-            info!("    ⚠ 空闲页面恢复不足: {} (初始: {})\n",
-                final_free, initial_free);
+            info!(
+                "    ⚠ 空闲页面恢复不足: {} (初始: {})\n",
+                final_free, initial_free
+            );
             validate_stats_consistency(final_total, final_free, final_used, "最终")
         }
     }
@@ -1699,7 +1827,12 @@ pub mod stats_accuracy {
         info!("    已用页面: {}\n", after_frag_used);
         info!("    已分配数: {}\n", allocs.len());
 
-        if !validate_stats_consistency(after_frag_total, after_frag_free, after_frag_used, "碎片化后") {
+        if !validate_stats_consistency(
+            after_frag_total,
+            after_frag_free,
+            after_frag_used,
+            "碎片化后",
+        ) {
             return false;
         }
 
@@ -1728,14 +1861,19 @@ pub mod stats_accuracy {
         let merge_success = merged_free >= initial_free.saturating_sub(5);
 
         if merge_success {
-            info!("  ✓ 合并成功，空闲页面: {} (初始: {})\n",
-                merged_free, initial_free);
+            info!(
+                "  ✓ 合并成功，空闲页面: {} (初始: {})\n",
+                merged_free, initial_free
+            );
         } else {
-            info!("  ⚠ 合并后空闲页面不足: {} (初始: {})\n",
-                merged_free, initial_free);
+            info!(
+                "  ⚠ 合并后空闲页面不足: {} (初始: {})\n",
+                merged_free, initial_free
+            );
         }
 
-        validate_stats_consistency(merged_total, merged_free, merged_used, "合并后") && merge_success
+        validate_stats_consistency(merged_total, merged_free, merged_used, "合并后")
+            && merge_success
     }
 
     /// Test 4: Stress test for statistics
@@ -1754,7 +1892,10 @@ pub mod stats_accuracy {
         let num_cycles = 30;
         let ops_per_cycle = 40;
 
-        info!("  运行 {} 个周期, 每周期 {} 次操作...\n", num_cycles, ops_per_cycle);
+        info!(
+            "  运行 {} 个周期, 每周期 {} 次操作...\n",
+            num_cycles, ops_per_cycle
+        );
 
         for cycle in 0..num_cycles {
             if cycle % 10 == 0 {
@@ -1785,7 +1926,12 @@ pub mod stats_accuracy {
             let after_alloc = allocator.available_pages();
             let after_alloc_used = allocator.used_pages();
 
-            if !validate_stats_consistency(initial_total, after_alloc, after_alloc_used, &alloc::format!("周期 {} 分配后", cycle)) {
+            if !validate_stats_consistency(
+                initial_total,
+                after_alloc,
+                after_alloc_used,
+                &alloc::format!("周期 {} 分配后", cycle),
+            ) {
                 return false;
             }
 
@@ -1804,7 +1950,12 @@ pub mod stats_accuracy {
             let after_free = allocator.available_pages();
             let after_free_used = allocator.used_pages();
 
-            if !validate_stats_consistency(initial_total, after_free, after_free_used, &alloc::format!("周期 {} 释放后", cycle)) {
+            if !validate_stats_consistency(
+                initial_total,
+                after_free,
+                after_free_used,
+                &alloc::format!("周期 {} 释放后", cycle),
+            ) {
                 return false;
             }
         }
@@ -1822,8 +1973,10 @@ pub mod stats_accuracy {
         if recovered {
             info!("  ✓ 压力测试通过，统计保持准确\n");
         } else {
-            info!("  ⚠ 空闲页面恢复不足: {} (初始: {})\n",
-                final_free, initial_free);
+            info!(
+                "  ⚠ 空闲页面恢复不足: {} (初始: {})\n",
+                final_free, initial_free
+            );
         }
 
         recovered
@@ -1862,10 +2015,22 @@ pub fn run_comprehensive_tests() {
 
     // Get allocator stats before tests
     info!("分配器初始状态:");
-    info!("  已用页面: {}", std::os::arceos::modules::axalloc::global_allocator().used_pages());
-    info!("  可用页面: {}", std::os::arceos::modules::axalloc::global_allocator().available_pages());
-    info!("  已用字节: {}", std::os::arceos::modules::axalloc::global_allocator().used_bytes());
-    info!("  可用字节: {}", std::os::arceos::modules::axalloc::global_allocator().available_bytes());
+    info!(
+        "  已用页面: {}",
+        std::os::arceos::modules::axalloc::global_allocator().used_pages()
+    );
+    info!(
+        "  可用页面: {}",
+        std::os::arceos::modules::axalloc::global_allocator().available_pages()
+    );
+    info!(
+        "  已用字节: {}",
+        std::os::arceos::modules::axalloc::global_allocator().used_bytes()
+    );
+    info!(
+        "  可用字节: {}",
+        std::os::arceos::modules::axalloc::global_allocator().available_bytes()
+    );
 
     info!("\nCPU 信息:");
     let cpu_count = get_cpu_count();
@@ -1894,10 +2059,14 @@ pub fn run_comprehensive_tests() {
     info!("测试总结 (Test Summary)");
     info!("═══════════════════════════════════════════════════════════");
     info!("总耗时: {}", format_time_ns(total_time));
-    info!("总吞吐量: {:.2} M ops/s",
+    info!(
+        "总吞吐量: {:.2} M ops/s",
         metrics.calculate_throughput(total_time) / 1_000_000.0
     );
-    info!("平均分配延迟: {:.2} ns", metrics.calculate_avg_alloc_latency());
+    info!(
+        "平均分配延迟: {:.2} ns",
+        metrics.calculate_avg_alloc_latency()
+    );
 
     if metrics.check_leaks() {
         info!("内存泄漏: ✓ 无泄漏");
@@ -1917,10 +2086,22 @@ pub fn run_comprehensive_tests() {
 
     // Get allocator stats after tests
     info!("\n分配器最终状态:");
-    info!("  已用页面: {}", std::os::arceos::modules::axalloc::global_allocator().used_pages());
-    info!("  可用页面: {}", std::os::arceos::modules::axalloc::global_allocator().available_pages());
-    info!("  已用字节: {}", std::os::arceos::modules::axalloc::global_allocator().used_bytes());
-    info!("  可用字节: {}", std::os::arceos::modules::axalloc::global_allocator().available_bytes());
+    info!(
+        "  已用页面: {}",
+        std::os::arceos::modules::axalloc::global_allocator().used_pages()
+    );
+    info!(
+        "  可用页面: {}",
+        std::os::arceos::modules::axalloc::global_allocator().available_pages()
+    );
+    info!(
+        "  已用字节: {}",
+        std::os::arceos::modules::axalloc::global_allocator().used_bytes()
+    );
+    info!(
+        "  可用字节: {}",
+        std::os::arceos::modules::axalloc::global_allocator().available_bytes()
+    );
 }
 
 /// Get CPU count

@@ -174,7 +174,6 @@ impl SlabCache {
 
         // This should never happen - newly initialized slab must have at least one free object
         panic!("Failed to allocate from newly initialized slab: bitmap inconsistency or corruption detected");
-
     }
 
     /// Pre-allocate an empty slab for future allocations
@@ -272,7 +271,9 @@ mod tests {
 
     impl MockPageAllocator {
         fn new() -> Self {
-            Self { allocated: alloc::vec::Vec::new() }
+            Self {
+                allocated: alloc::vec::Vec::new(),
+            }
         }
     }
 

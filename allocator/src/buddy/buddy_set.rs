@@ -237,7 +237,7 @@ impl<const PAGE_SIZE: usize> BuddySet<PAGE_SIZE> {
         } else {
             num_pages.next_power_of_two().trailing_zeros() as usize
         };
-        
+
         if order > DEFAULT_MAX_ORDER {
             error!(
                 "zone {}: Order {} exceeds maximum supported order {}",
