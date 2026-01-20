@@ -225,17 +225,18 @@ impl SlabCache {
         }
 
         let was_full = node.is_full();
-        let (should_dealloc_slab, actually_freed) = if let Some(obj_idx) = node.object_index_from_addr(obj_addr) {
-            // dealloc_object returns true if object was allocated, false if already free (double-free)
-            let actually_freed = node.dealloc_object(obj_idx);
-            (node.is_empty() && actually_freed, actually_freed)
-        } else {
-            error!(
-                "Invalid address {:x} in slab at {:x}: not a valid object",
-                obj_addr, slab_base
-            );
-            return (0, true);  // Not a double-free, just invalid address (treat as no-op)
-        };
+        let (should_dealloc_slab, actually_freed) =
+            if let Some(obj_idx) = node.object_index_from_addr(obj_addr) {
+                // dealloc_object returns true if object was allocated, false if already free (double-free)
+                let actually_freed = node.dealloc_object(obj_idx);
+                (node.is_empty() && actually_freed, actually_freed)
+            } else {
+                error!(
+                    "Invalid address {:x} in slab at {:x}: not a valid object",
+                    obj_addr, slab_base
+                );
+                return (0, true); // Not a double-free, just invalid address (treat as no-op)
+            };
 
         // Only manipulate lists if this was not a double-free
         if actually_freed {

@@ -179,7 +179,8 @@ impl<const PAGE_SIZE: usize> ByteAllocator for SlabByteAllocator<PAGE_SIZE> {
         let page_allocator = unsafe { &mut *page_allocator_ptr };
         let cache = &mut self.caches[size_class.to_index()];
 
-        let (freed_bytes, actually_freed) = cache.dealloc_object(obj_addr, page_allocator, PAGE_SIZE);
+        let (freed_bytes, actually_freed) =
+            cache.dealloc_object(obj_addr, page_allocator, PAGE_SIZE);
 
         // Only update allocated_bytes if this was not a double-free
         if actually_freed {

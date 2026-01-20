@@ -10,11 +10,7 @@ use log::{debug, error, info, warn};
 #[cfg(feature = "tracking")]
 use super::ZoneInfo;
 
-use super::{
-    buddy_block::MAX_ZONES,
-    buddy_set::BuddySet,
-    global_node_pool::GlobalNodePool,
-};
+use super::{buddy_block::MAX_ZONES, buddy_set::BuddySet, global_node_pool::GlobalNodePool};
 
 const NODE_POOL_PAGES: usize = 10;
 const NODE_POOL_LOW_WATER_NODES: usize = 128;

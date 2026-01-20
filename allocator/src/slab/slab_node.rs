@@ -160,7 +160,7 @@ impl SlabNode {
 
             header.free_bitmap[word_idx] |= mask;
             header.free_count = header.free_count.saturating_add(1);
-            true  // Object was successfully deallocated
+            true // Object was successfully deallocated
         } else {
             false
         }

@@ -544,7 +544,7 @@ pub mod basic_tests {
         let count = 100;
         let mut allocs: Vec<(NonNull<u8>, usize)> = Vec::new();
 
-        // Allocate memory  
+        // Allocate memory
         for &size in &sizes {
             for _ in 0..count {
                 let start = get_time_ns();
@@ -588,7 +588,6 @@ pub mod basic_tests {
         info!("  ✓ 重复释放测试通过（幂等性验证）\n");
         true
     }
-
 }
 
 /// Performance tests

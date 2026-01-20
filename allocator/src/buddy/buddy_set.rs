@@ -275,7 +275,7 @@ impl<const PAGE_SIZE: usize> BuddySet<PAGE_SIZE> {
         // This handles cases where a large block is freed but contains already free sub-blocks
         for i in 0..initial_order {
             if self.free_lists[i].has_block_in_range(pool, addr, addr + size) {
-                error!(
+                warn!(
                     "zone {}: Double free (descendant) detected at order {} in range [{:#x}, {:#x})",
                     self.zone_id, i, addr, addr + size
                 );
@@ -295,7 +295,7 @@ impl<const PAGE_SIZE: usize> BuddySet<PAGE_SIZE> {
 
             // Double-free detection (Ancestor check): Check if this block or its parent is already free
             if self.find_block_in_order(pool, i, current_base).is_some() {
-                error!(
+                warn!(
                     "zone {}: Double free detected at addr {:#x} (found at order {})",
                     self.zone_id, addr, i
                 );
@@ -306,7 +306,9 @@ impl<const PAGE_SIZE: usize> BuddySet<PAGE_SIZE> {
             if merging && i < self.max_order() {
                 let buddy_addr = current_base ^ block_size;
                 if self.addr_in_zone(buddy_addr) {
-                    if let Some((node_idx, prev_idx)) = self.find_block_in_order(pool, i, buddy_addr) {
+                    if let Some((node_idx, prev_idx)) =
+                        self.find_block_in_order(pool, i, buddy_addr)
+                    {
                         // Buddy found, remove it and continue merging at next order
                         self.free_lists[i].remove_with_prev(pool, node_idx, prev_idx);
                         current_addr = current_base & buddy_addr;
