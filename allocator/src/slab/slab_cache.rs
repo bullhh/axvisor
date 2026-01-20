@@ -224,7 +224,12 @@ impl SlabCache {
             // This can happen if the slab was already returned to the page allocator
             // and the memory was reused, or if the pointer is completely invalid.
             // For robustness, especially in double-free tests, we return false.
-            warn!("slab allocator: Invalid slab base {:#x} for size class {:?}", slab_base, self.size_class);
+            warn!(
+                "slab allocator: Invalid slab base {:#x} for size class {:?}",
+                slab_base, self.size_class
+            );
+            warn!("this can happen if the slab was already returned to the page allocator and the memory was reused, 
+                or if the pointer is completely invalid");
             return (0, false);
         }
 
