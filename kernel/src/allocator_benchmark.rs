@@ -546,6 +546,7 @@ pub mod basic_tests {
 
         // Allocate memory
         for &size in &sizes {
+            // allocs.clear(); // Clear from previous size
             for _ in 0..count {
                 let start = get_time_ns();
                 unsafe {
@@ -569,6 +570,7 @@ pub mod basic_tests {
                     let duration = get_time_ns() - start;
                     metrics.record_dealloc(*size, duration);
                 }
+                info!("释放地址: {:p}，大小: {}", ptr.as_ptr(), size);
             }
 
             // Second dealloc - should be idempotent (no-op)
@@ -580,6 +582,7 @@ pub mod basic_tests {
                     let _duration = get_time_ns() - start;
                     // Don't record metrics for double-free, it should be no-op
                 }
+                info!("设计重复释放地址: {:p}，大小: {}", ptr.as_ptr(), size);
             }
 
             info!("  size:{} 重复释放测试通过", size);

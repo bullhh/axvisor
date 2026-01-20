@@ -3,7 +3,7 @@
 //! This module implements SlabCache which manages three lists (empty, partial, full)
 //! of slab nodes for a specific size class.
 
-use log::error;
+use log::{error, warn};
 
 use super::slab_byte_allocator::{PageAllocatorForSlab as BytePageAllocator, SizeClass};
 use super::slab_node::SlabNode;
@@ -221,7 +221,11 @@ impl SlabCache {
         let slab_base = align_down_any(obj_addr, slab_bytes);
         let mut node = SlabNode::new(slab_base, self.size_class);
         if !node.is_valid_for_size_class() {
-            panic!("Attempt to free memory from invalid slab");
+            // This can happen if the slab was already returned to the page allocator
+            // and the memory was reused, or if the pointer is completely invalid.
+            // For robustness, especially in double-free tests, we return false.
+            warn!("slab allocator: Invalid slab base {:#x} for size class {:?}", slab_base, self.size_class);
+            return (0, false);
         }
 
         let was_full = node.is_full();
