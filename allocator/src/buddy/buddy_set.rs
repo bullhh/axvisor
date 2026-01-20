@@ -267,66 +267,69 @@ impl<const PAGE_SIZE: usize> BuddySet<PAGE_SIZE> {
             return;
         }
 
-        // Check if this block is already free (double-free detection)
-        // We need to check if this exact block (addr, order) is in the free list
-        // This is important for double-free detection, especially after buddy merging
-        if self.find_block_in_order(pool, order, addr).is_some() {
-            // Block is already free - double-free detected, treat as success (no-op)
-            return;
+        // Integrated double-free detection and buddy merging
+        let initial_order = order;
+        let size = (1 << initial_order) * PAGE_SIZE;
+
+        // 1. Descendant check: Check if any part of the block being freed is already free
+        // This handles cases where a large block is freed but contains already free sub-blocks
+        for i in 0..initial_order {
+            if self.free_lists[i].has_block_in_range(pool, addr, addr + size) {
+                error!(
+                    "zone {}: Double free (descendant) detected at order {} in range [{:#x}, {:#x})",
+                    self.zone_id, i, addr, addr + size
+                );
+                return;
+            }
         }
 
-        // Initialize block for merging
-        let mut current_pfn = pfn;
+        // 2. Ancestor check and Merging loop
+        // We check from initial_order up to max_order.
+        // For each i, we check if the current aligned base is in free_lists[i].
+        let mut current_addr = addr;
+        let mut merging = true;
 
-        // Try to merge with buddy blocks
-        while order < self.max_order() {
-            // Calculate buddy PFN using XOR operation
-            let buddy_pfn = current_pfn ^ (1 << order);
+        for i in initial_order..=self.max_order() {
+            let block_size = (1 << i) * PAGE_SIZE;
+            let current_base = current_addr & !(block_size - 1);
 
-            let buddy_addr = buddy_pfn * PAGE_SIZE;
-
-            if !self.addr_in_zone(buddy_addr) {
-                break;
+            // Double-free detection (Ancestor check): Check if this block or its parent is already free
+            if self.find_block_in_order(pool, i, current_base).is_some() {
+                error!(
+                    "zone {}: Double free detected at addr {:#x} (found at order {})",
+                    self.zone_id, addr, i
+                );
+                return;
             }
 
-            // Try to find buddy in free list
-            if let Some((node_idx, prev_idx)) = self.find_block_in_order(pool, order, buddy_addr) {
-                // Verify buddy has correct order and address
-                let node = pool.get_node(node_idx).unwrap();
-                if node.data.order != order || node.data.addr != buddy_addr {
-                    warn!(
-                        "zone {}: Inconsistent buddy block found at PFN {}",
-                        self.zone_id, buddy_pfn
-                    );
-                    break;
+            // Buddy merging
+            if merging && i < self.max_order() {
+                let buddy_addr = current_base ^ block_size;
+                if self.addr_in_zone(buddy_addr) {
+                    if let Some((node_idx, prev_idx)) = self.find_block_in_order(pool, i, buddy_addr) {
+                        // Buddy found, remove it and continue merging at next order
+                        self.free_lists[i].remove_with_prev(pool, node_idx, prev_idx);
+                        current_addr = current_base & buddy_addr;
+                        order = i + 1;
+                        continue;
+                    }
                 }
-
-                // Remove buddy from free list using prev_idx for O(1) deletion
-                self.free_lists[order].remove_with_prev(pool, node_idx, prev_idx);
-
-                // Merge: use the aligned address (lower address)
-                current_pfn = current_pfn & buddy_pfn;
-
-                // Move to next order
-                order += 1;
-            } else {
-                // No buddy found, cannot merge further
-                break;
+                // No buddy found or out of zone, stop merging but continue checking for double frees
+                merging = false;
             }
         }
 
         // Add the final merged block to the appropriate free list (sorted!)
-        let final_addr = current_pfn * PAGE_SIZE;
+        let final_addr = current_addr;
         let block = BuddyBlock {
             order,
             addr: final_addr,
         };
 
-        let success = self.add_block_to_order(pool, order, block);
-        if !success {
+        if !self.add_block_to_order(pool, order, block) {
             error!(
-                "zone {}: Failed to push block to free list: addr={:#x}, order={}, PFN={}",
-                self.zone_id, final_addr, order, current_pfn
+                "zone {}: Failed to push block to free list: addr={:#x}, order={}",
+                self.zone_id, final_addr, order
             );
         }
     }

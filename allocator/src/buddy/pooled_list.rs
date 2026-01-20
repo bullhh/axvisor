@@ -99,6 +99,36 @@ impl PooledLinkedList {
         true
     }
 
+    /// Check if any block in the list falls within the given address range [start, end)
+    pub fn has_block_in_range(&self, pool: &GlobalNodePool, start: usize, end: usize) -> bool {
+        let mut current_idx = self.head;
+        let mut visited = 0;
+
+        while let Some(idx) = current_idx {
+            if visited > self.len {
+                break;
+            }
+            if let Some(node) = pool.get_node(idx) {
+                // Early termination: list is sorted by address
+                if node.data.addr >= end {
+                    break;
+                }
+                // Check if block starts within the range
+                // For i < initial_order, any block in the range is a conflict.
+                // Since blocks are aligned to their size, a block starting before 'start'
+                // cannot overlap with [start, end) if its size is smaller than start's alignment.
+                if node.data.addr >= start {
+                    return true;
+                }
+                current_idx = node.next;
+            } else {
+                break;
+            }
+            visited += 1;
+        }
+        false
+    }
+
     /// Pop an element from the front of the list
     pub fn pop_front(&mut self, pool: &mut GlobalNodePool) -> Option<BuddyBlock> {
         if self.head.is_none() {
