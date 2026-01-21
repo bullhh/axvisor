@@ -54,6 +54,7 @@ pub struct MemoryStatsReporter;
 impl MemoryStatsReporter {
     /// Print detailed allocation failure statistics
     /// This is a standalone function to keep allocation logic clean
+    #[allow(unused_variables)]
     pub fn print_alloc_failure_stats(
         page_size: usize,
         num_zones: usize,
@@ -64,6 +65,7 @@ impl MemoryStatsReporter {
         request_align: usize,
     ) {
         {
+            #[cfg(feature = "log")]
             use log::error;
             error!("========================================");
             error!(

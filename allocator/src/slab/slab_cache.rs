@@ -3,6 +3,7 @@
 //! This module implements SlabCache which manages three lists (empty, partial, full)
 //! of slab nodes for a specific size class.
 
+#[cfg(feature = "log")]
 use log::{error, warn};
 
 use super::slab_byte_allocator::{PageAllocatorForSlab as BytePageAllocator, SizeClass};

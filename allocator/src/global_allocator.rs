@@ -16,6 +16,7 @@ use super::page_allocator::CompositePageAllocator;
 use super::slab::{PageAllocatorForSlab, SlabByteAllocator};
 use kspin::SpinNoIrq;
 
+#[cfg(feature = "log")]
 use log::{error, warn};
 
 const MIN_HEAP_SIZE: usize = 0x8000; // 32KB minimum heap
@@ -374,10 +375,10 @@ unsafe impl<const PAGE_SIZE: usize> core::alloc::GlobalAlloc for GlobalAllocator
                     }
                     return ptr.as_ptr();
                 }
-                Err(e) => {
+                Err(_e) => {
                     warn!(
                         "global allocator: Slab allocator failed for layout {:?}, error: {:?}, falling back to page allocator",
-                        layout, e
+                        layout, _e
                     );
                     return core::ptr::null_mut();
                 }

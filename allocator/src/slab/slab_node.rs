@@ -3,6 +3,7 @@
 //! This module defines the SlabNode structure which manages exactly 512 objects
 //! using a fixed bitmap.
 
+#[cfg(feature = "log")]
 use log::error;
 
 pub use super::slab_byte_allocator::SizeClass;

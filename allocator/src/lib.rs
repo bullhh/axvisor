@@ -36,6 +36,7 @@ macro_rules! debug {
     ($($arg:tt)*) => {};
 }
 #[cfg(not(feature = "log"))]
+#[allow(unused_macros)]
 macro_rules! trace {
     ($($arg:tt)*) => {};
 }

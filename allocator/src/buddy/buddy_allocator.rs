@@ -5,6 +5,7 @@
 
 use crate::{AllocError, AllocResult, BaseAllocator, PageAllocator};
 
+#[cfg(feature = "log")]
 use log::{debug, error, info, warn};
 
 #[cfg(feature = "tracking")]
@@ -260,17 +261,17 @@ impl<const PAGE_SIZE: usize> BuddyPageAllocator<PAGE_SIZE> {
 
         for i in 0..self.num_zones {
             let zone = &self.zones[i];
-            let zone_info = zone.zone_info();
+            let _zone_info = zone.zone_info();
             info!("Zone {}:", i);
             info!(
                 "  Address range: [{:#x}, {:#x})",
-                zone_info.start_addr, zone_info.end_addr
+                _zone_info.start_addr, _zone_info.end_addr
             );
-            info!("  Total pages: {}", zone_info.total_pages);
+            info!("  Total pages: {}", _zone_info.total_pages);
             info!(
                 "  Total size: {:#x} ({} MB)",
-                zone_info.total_pages * PAGE_SIZE,
-                (zone_info.total_pages * PAGE_SIZE) / (1024 * 1024)
+                _zone_info.total_pages * PAGE_SIZE,
+                (_zone_info.total_pages * PAGE_SIZE) / (1024 * 1024)
             );
             info!("  Free blocks distribution:");
 
@@ -278,13 +279,13 @@ impl<const PAGE_SIZE: usize> BuddyPageAllocator<PAGE_SIZE> {
             for order in 0..=zone.max_order() {
                 let block_count = zone.get_order_block_count(order);
                 if block_count > 0 {
-                    let block_size = (1 << order) * PAGE_SIZE;
+                    let _block_size = (1 << order) * PAGE_SIZE;
                     info!(
                         "    Order {}: {} blocks (size {} bytes each, total {:#x})",
                         order,
                         block_count,
-                        block_size,
-                        block_count * block_size
+                        _block_size,
+                        block_count * _block_size
                     );
                 }
             }
@@ -292,9 +293,9 @@ impl<const PAGE_SIZE: usize> BuddyPageAllocator<PAGE_SIZE> {
         }
 
         info!("Global node pool stats:");
-        let pool_stats = self.global_node_pool.get_stats();
-        info!("  Total allocations: {}", pool_stats.total_allocations);
-        info!("  Free nodes: {}", pool_stats.free_nodes);
+        let _pool_stats = self.global_node_pool.get_stats();
+        info!("  Total allocations: {}", _pool_stats.total_allocations);
+        info!("  Free nodes: {}", _pool_stats.free_nodes);
         info!("==============================================");
     }
 

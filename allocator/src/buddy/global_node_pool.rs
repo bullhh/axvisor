@@ -299,7 +299,7 @@ mod tests {
         pool.init(region_start, region_size);
 
         let idx1 = pool.alloc_node().unwrap();
-        let idx2 = pool.alloc_node().unwrap();
+        let _idx2 = pool.alloc_node().unwrap();
 
         let stats = pool.get_stats();
         assert_eq!(stats.total_nodes, TEST_NODE_COUNT);

@@ -5,6 +5,7 @@
 
 use crate::{AllocError, AllocResult};
 
+#[cfg(feature = "log")]
 use log::{error, warn};
 
 use super::{
