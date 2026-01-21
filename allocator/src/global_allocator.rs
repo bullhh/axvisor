@@ -8,7 +8,7 @@ extern crate alloc;
 use crate::{AllocError, AllocResult, BaseAllocator, ByteAllocator, PageAllocator};
 use core::alloc::Layout;
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use core::cell::UnsafeCell;
 
 #[cfg(feature = "tracking")]
@@ -99,12 +99,57 @@ impl Default for UsageStats {
     }
 }
 
+/// Internal atomic representation of usage statistics
+#[cfg(feature = "tracking")]
+struct UsageStatsAtomic {
+    total_pages: AtomicUsize,
+    used_pages: AtomicUsize,
+    free_pages: AtomicUsize,
+    slab_bytes: AtomicUsize,
+    heap_bytes: AtomicUsize,
+}
+
+#[cfg(feature = "tracking")]
+impl UsageStatsAtomic {
+    const fn new() -> Self {
+        Self {
+            total_pages: AtomicUsize::new(0),
+            used_pages: AtomicUsize::new(0),
+            free_pages: AtomicUsize::new(0),
+            slab_bytes: AtomicUsize::new(0),
+            heap_bytes: AtomicUsize::new(0),
+        }
+    }
+
+    fn snapshot(&self) -> UsageStats {
+        UsageStats {
+            total_pages: self.total_pages.load(Ordering::Relaxed),
+            used_pages: self.used_pages.load(Ordering::Relaxed),
+            free_pages: self.free_pages.load(Ordering::Relaxed),
+            slab_bytes: self.slab_bytes.load(Ordering::Relaxed),
+            heap_bytes: self.heap_bytes.load(Ordering::Relaxed),
+        }
+    }
+}
+
+#[inline]
+fn saturating_sub_atomic(counter: &AtomicUsize, value: usize) {
+    let mut prev = counter.load(Ordering::Relaxed);
+    loop {
+        let new = prev.saturating_sub(value);
+        match counter.compare_exchange(prev, new, Ordering::AcqRel, Ordering::Relaxed) {
+            Ok(_) => break,
+            Err(actual) => prev = actual,
+        }
+    }
+}
+
 /// Global allocator that coordinates composite and slab allocators
 pub struct GlobalAllocator<const PAGE_SIZE: usize = { crate::DEFAULT_PAGE_SIZE }> {
     page_allocator: SimpleSpinLock<CompositePageAllocator<PAGE_SIZE>>,
     slab_allocator: SimpleSpinLock<SlabByteAllocator<PAGE_SIZE>>,
     #[cfg(feature = "tracking")]
-    stats: SimpleSpinLock<UsageStats>,
+    stats: UsageStatsAtomic,
     initialized: AtomicBool,
 }
 
@@ -114,13 +159,7 @@ impl<const PAGE_SIZE: usize> GlobalAllocator<PAGE_SIZE> {
             page_allocator: SimpleSpinLock::new(CompositePageAllocator::<PAGE_SIZE>::new()),
             slab_allocator: SimpleSpinLock::new(SlabByteAllocator::<PAGE_SIZE>::new()),
             #[cfg(feature = "tracking")]
-            stats: SimpleSpinLock::new(UsageStats {
-                total_pages: 0,
-                used_pages: 0,
-                free_pages: 0,
-                heap_bytes: 0,
-                slab_bytes: 0,
-            }),
+            stats: UsageStatsAtomic::new(),
             initialized: AtomicBool::new(false),
         }
     }
@@ -147,10 +186,15 @@ impl<const PAGE_SIZE: usize> GlobalAllocator<PAGE_SIZE> {
         #[cfg(feature = "tracking")]
         {
             let page_alloc = self.page_allocator.lock();
-            let mut stats = self.stats.lock();
-            stats.total_pages = page_alloc.total_pages();
-            stats.used_pages = page_alloc.used_pages();
-            stats.free_pages = page_alloc.available_pages();
+            self.stats
+                .total_pages
+                .store(page_alloc.total_pages(), Ordering::Relaxed);
+            self.stats
+                .used_pages
+                .store(page_alloc.used_pages(), Ordering::Relaxed);
+            self.stats
+                .free_pages
+                .store(page_alloc.available_pages(), Ordering::Relaxed);
         }
 
         self.initialized.store(true, Ordering::SeqCst);
@@ -165,9 +209,12 @@ impl<const PAGE_SIZE: usize> GlobalAllocator<PAGE_SIZE> {
         #[cfg(feature = "tracking")]
         {
             let page_alloc = self.page_allocator.lock();
-            let mut stats = self.stats.lock();
-            stats.total_pages = page_alloc.total_pages();
-            stats.free_pages = page_alloc.available_pages();
+            self.stats
+                .total_pages
+                .store(page_alloc.total_pages(), Ordering::Relaxed);
+            self.stats
+                .free_pages
+                .store(page_alloc.available_pages(), Ordering::Relaxed);
         }
 
         Ok(())
@@ -186,7 +233,9 @@ impl<const PAGE_SIZE: usize> GlobalAllocator<PAGE_SIZE> {
                 Ok(ptr) => {
                     #[cfg(feature = "tracking")]
                     {
-                        self.stats.lock().slab_bytes += layout.size();
+                        self.stats
+                            .slab_bytes
+                            .fetch_add(layout.size(), Ordering::Relaxed);
                     }
                     return Ok(ptr);
                 }
@@ -214,10 +263,15 @@ impl<const PAGE_SIZE: usize> GlobalAllocator<PAGE_SIZE> {
 
         #[cfg(feature = "tracking")]
         {
-            let mut stats = self.stats.lock();
-            stats.used_pages += pages_needed;
-            stats.free_pages -= pages_needed;
-            stats.heap_bytes += layout.size();
+            self.stats
+                .used_pages
+                .fetch_add(pages_needed, Ordering::Relaxed);
+            self.stats
+                .free_pages
+                .fetch_sub(pages_needed, Ordering::Relaxed);
+            self.stats
+                .heap_bytes
+                .fetch_add(layout.size(), Ordering::Relaxed);
         }
 
         Ok(ptr)
@@ -235,9 +289,12 @@ impl<const PAGE_SIZE: usize> GlobalAllocator<PAGE_SIZE> {
         // Update statistics
         #[cfg(feature = "tracking")]
         {
-            let mut stats = self.stats.lock();
-            stats.used_pages += num_pages;
-            stats.free_pages -= num_pages;
+            self.stats
+                .used_pages
+                .fetch_add(num_pages, Ordering::Relaxed);
+            self.stats
+                .free_pages
+                .fetch_sub(num_pages, Ordering::Relaxed);
         }
 
         Ok(addr)
@@ -256,8 +313,7 @@ impl<const PAGE_SIZE: usize> GlobalAllocator<PAGE_SIZE> {
             self.slab_allocator.lock().dealloc(ptr, layout);
             #[cfg(feature = "tracking")]
             {
-                let mut stats = self.stats.lock();
-                stats.slab_bytes = stats.slab_bytes.saturating_sub(layout.size());
+                saturating_sub_atomic(&self.stats.slab_bytes, layout.size());
             }
             return;
         }
@@ -271,10 +327,11 @@ impl<const PAGE_SIZE: usize> GlobalAllocator<PAGE_SIZE> {
         );
         #[cfg(feature = "tracking")]
         {
-            let mut stats = self.stats.lock();
-            stats.used_pages = stats.used_pages.saturating_sub(pages_needed);
-            stats.free_pages += pages_needed;
-            stats.heap_bytes = stats.heap_bytes.saturating_sub(layout.size());
+            saturating_sub_atomic(&self.stats.used_pages, pages_needed);
+            self.stats
+                .free_pages
+                .fetch_add(pages_needed, Ordering::Relaxed);
+            saturating_sub_atomic(&self.stats.heap_bytes, layout.size());
         }
     }
 
@@ -289,9 +346,10 @@ impl<const PAGE_SIZE: usize> GlobalAllocator<PAGE_SIZE> {
         // Update statistics
         #[cfg(feature = "tracking")]
         {
-            let mut stats = self.stats.lock();
-            stats.used_pages = stats.used_pages.saturating_sub(num_pages);
-            stats.free_pages += num_pages;
+            saturating_sub_atomic(&self.stats.used_pages, num_pages);
+            self.stats
+                .free_pages
+                .fetch_add(num_pages, Ordering::Relaxed);
         }
     }
 }
@@ -300,7 +358,7 @@ impl<const PAGE_SIZE: usize> GlobalAllocator<PAGE_SIZE> {
     /// Get memory statistics
     #[cfg(feature = "tracking")]
     pub fn get_stats(&self) -> UsageStats {
-        *self.stats.lock()
+        self.stats.snapshot()
     }
 
     /// Get buddy allocator statistics
@@ -343,9 +401,12 @@ impl<const PAGE_SIZE: usize> PageAllocator for GlobalAllocator<PAGE_SIZE> {
         // Update statistics
         #[cfg(feature = "tracking")]
         {
-            let mut stats = self.stats.lock();
-            stats.used_pages += num_pages;
-            stats.free_pages -= num_pages;
+            self.stats
+                .used_pages
+                .fetch_add(num_pages, Ordering::Relaxed);
+            self.stats
+                .free_pages
+                .fetch_sub(num_pages, Ordering::Relaxed);
         }
 
         Ok(addr)
@@ -365,9 +426,10 @@ impl<const PAGE_SIZE: usize> PageAllocator for GlobalAllocator<PAGE_SIZE> {
         // Update statistics
         #[cfg(feature = "tracking")]
         {
-            let mut stats = self.stats.lock();
-            stats.used_pages = stats.used_pages.saturating_sub(num_pages);
-            stats.free_pages += num_pages;
+            saturating_sub_atomic(&self.stats.used_pages, num_pages);
+            self.stats
+                .free_pages
+                .fetch_add(num_pages, Ordering::Relaxed);
         }
     }
 
@@ -391,9 +453,12 @@ impl<const PAGE_SIZE: usize> PageAllocator for GlobalAllocator<PAGE_SIZE> {
         // Update statistics
         #[cfg(feature = "tracking")]
         {
-            let mut stats = self.stats.lock();
-            stats.used_pages += num_pages;
-            stats.free_pages -= num_pages;
+            self.stats
+                .used_pages
+                .fetch_add(num_pages, Ordering::Relaxed);
+            self.stats
+                .free_pages
+                .fetch_sub(num_pages, Ordering::Relaxed);
         }
 
         Ok(addr)
@@ -424,8 +489,9 @@ unsafe impl<const PAGE_SIZE: usize> core::alloc::GlobalAlloc for GlobalAllocator
                 Ok(ptr) => {
                     #[cfg(feature = "tracking")]
                     {
-                        let mut stats = self.stats.lock();
-                        stats.slab_bytes += layout.size();
+                        self.stats
+                            .slab_bytes
+                            .fetch_add(layout.size(), Ordering::Relaxed);
                     }
                     return ptr.as_ptr();
                 }
@@ -449,10 +515,15 @@ unsafe impl<const PAGE_SIZE: usize> core::alloc::GlobalAlloc for GlobalAllocator
             Ok(addr) => {
                 #[cfg(feature = "tracking")]
                 {
-                    let mut stats = self.stats.lock();
-                    stats.used_pages += pages_needed;
-                    stats.free_pages -= pages_needed;
-                    stats.heap_bytes += layout.size();
+                    self.stats
+                        .used_pages
+                        .fetch_add(pages_needed, Ordering::Relaxed);
+                    self.stats
+                        .free_pages
+                        .fetch_sub(pages_needed, Ordering::Relaxed);
+                    self.stats
+                        .heap_bytes
+                        .fetch_add(layout.size(), Ordering::Relaxed);
                 }
                 addr as *mut u8
             }
