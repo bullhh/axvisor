@@ -321,6 +321,7 @@ dependencies = [
  "axerrno 0.2.2",
  "buddy-slab-allocator",
  "cfg-if",
+ "kernel_guard",
  "kspin",
  "log",
  "memory_addr",
@@ -1304,7 +1305,6 @@ name = "buddy-slab-allocator"
 version = "0.1.0"
 dependencies = [
  "cfg-if",
- "kspin",
  "log",
 ]
 

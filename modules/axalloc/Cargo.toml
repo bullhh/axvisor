@@ -17,6 +17,7 @@ axbacktrace = { workspace = true, optional = true }
 axerrno.workspace = true
 cfg-if.workspace = true
 kspin.workspace = true
+kernel_guard.workspace = true
 log.workspace = true
 memory_addr.workspace = true
 percpu = { workspace = true, optional = true }

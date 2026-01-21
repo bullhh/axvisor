@@ -9,17 +9,71 @@ use crate::{AllocError, AllocResult, BaseAllocator, ByteAllocator, PageAllocator
 use core::alloc::Layout;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, Ordering};
+use core::cell::UnsafeCell;
 
 #[cfg(feature = "tracking")]
 use super::buddy::BuddyStats;
 use super::page_allocator::CompositePageAllocator;
 use super::slab::{PageAllocatorForSlab, SlabByteAllocator};
-use kspin::SpinNoIrq;
 
 #[cfg(feature = "log")]
 use log::{error, warn};
 
 const MIN_HEAP_SIZE: usize = 0x8000; // 32KB minimum heap
+
+/// A simple spinlock that doesn't handle IRQs or preemption.
+///
+/// This is used within the allocator crate to provide basic mutual exclusion
+/// without depending on architecture-specific crates like `kspin` or `kernel_guard`.
+pub struct SimpleSpinLock<T> {
+    locked: AtomicBool,
+    data: UnsafeCell<T>,
+}
+
+unsafe impl<T: Send> Sync for SimpleSpinLock<T> {}
+
+pub struct SimpleSpinLockGuard<'a, T> {
+    lock: &'a SimpleSpinLock<T>,
+}
+
+impl<T> SimpleSpinLock<T> {
+    pub const fn new(data: T) -> Self {
+        Self {
+            locked: AtomicBool::new(false),
+            data: UnsafeCell::new(data),
+        }
+    }
+
+    pub fn lock(&self) -> SimpleSpinLockGuard<'_, T> {
+        while self
+            .locked
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            core::hint::spin_loop();
+        }
+        SimpleSpinLockGuard { lock: self }
+    }
+}
+
+impl<'a, T> core::ops::Deref for SimpleSpinLockGuard<'a, T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        unsafe { &*self.lock.data.get() }
+    }
+}
+
+impl<'a, T> core::ops::DerefMut for SimpleSpinLockGuard<'a, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        unsafe { &mut *self.lock.data.get() }
+    }
+}
+
+impl<'a, T> Drop for SimpleSpinLockGuard<'a, T> {
+    fn drop(&mut self) {
+        self.lock.locked.store(false, Ordering::Release);
+    }
+}
 
 /// Memory usage statistics
 #[cfg(feature = "tracking")]
@@ -47,20 +101,20 @@ impl Default for UsageStats {
 
 /// Global allocator that coordinates composite and slab allocators
 pub struct GlobalAllocator<const PAGE_SIZE: usize = { crate::DEFAULT_PAGE_SIZE }> {
-    page_allocator: SpinNoIrq<CompositePageAllocator<PAGE_SIZE>>,
-    slab_allocator: SpinNoIrq<SlabByteAllocator<PAGE_SIZE>>,
+    page_allocator: SimpleSpinLock<CompositePageAllocator<PAGE_SIZE>>,
+    slab_allocator: SimpleSpinLock<SlabByteAllocator<PAGE_SIZE>>,
     #[cfg(feature = "tracking")]
-    stats: SpinNoIrq<UsageStats>,
+    stats: SimpleSpinLock<UsageStats>,
     initialized: AtomicBool,
 }
 
 impl<const PAGE_SIZE: usize> GlobalAllocator<PAGE_SIZE> {
     pub const fn new() -> Self {
         Self {
-            page_allocator: SpinNoIrq::new(CompositePageAllocator::<PAGE_SIZE>::new()),
-            slab_allocator: SpinNoIrq::new(SlabByteAllocator::<PAGE_SIZE>::new()),
+            page_allocator: SimpleSpinLock::new(CompositePageAllocator::<PAGE_SIZE>::new()),
+            slab_allocator: SimpleSpinLock::new(SlabByteAllocator::<PAGE_SIZE>::new()),
             #[cfg(feature = "tracking")]
-            stats: SpinNoIrq::new(UsageStats {
+            stats: SimpleSpinLock::new(UsageStats {
                 total_pages: 0,
                 used_pages: 0,
                 free_pages: 0,
