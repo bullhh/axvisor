@@ -164,6 +164,28 @@ impl<const PAGE_SIZE: usize> GlobalAllocator<PAGE_SIZE> {
         }
     }
 
+    /// Set the address translator so that the underlying page allocator can
+    /// reason about physical address ranges (e.g. low-memory regions below 4GiB).
+    pub fn set_addr_translator(&self, translator: &'static dyn crate::AddrTranslator) {
+        self.page_allocator.lock().set_addr_translator(translator);
+    }
+
+    /// Allocate low-memory pages (physical address < 4GiB).
+    /// This is a thin wrapper over the composite allocator's lowmem API.
+    pub fn alloc_dma32_pages(
+        &self,
+        num_pages: usize,
+        alignment: usize,
+    ) -> AllocResult<usize> {
+        if !self.initialized.load(Ordering::SeqCst) {
+            error!("global allocator: Allocator not initialized");
+            return Err(AllocError::NoMemory);
+        }
+        self.page_allocator
+            .lock()
+            .alloc_pages_lowmem(num_pages, alignment)
+    }
+
     /// Initialize allocator with given memory region
     pub fn init(&self, start_vaddr: usize, size: usize) -> AllocResult<()> {
         if size <= MIN_HEAP_SIZE {

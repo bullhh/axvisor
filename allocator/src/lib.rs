@@ -60,6 +60,17 @@ pub enum AllocError {
 /// A [`Result`] type with [`AllocError`] as the error type.
 pub type AllocResult<T = ()> = Result<T, AllocError>;
 
+/// Address translator used by allocators to reason about physical addresses.
+///
+/// Implementations should provide a stable virtual-to-physical mapping
+/// for the allocator-managed address range.
+pub trait AddrTranslator: Sync {
+    /// Translate a virtual address to a physical address.
+    ///
+    /// Returns `None` if the address is not valid or not mapped.
+    fn virt_to_phys(&self, va: usize) -> Option<usize>;
+}
+
 /// The base allocator inherited by other allocators.
 pub trait BaseAllocator {
     /// Initialize the allocator with a free memory region.

@@ -111,6 +111,22 @@ impl<const PAGE_SIZE: usize> CompositePageAllocator<PAGE_SIZE> {
         }
     }
 
+    /// Set the address translator so that the underlying buddy allocator can
+    /// reason about physical address ranges (e.g. low-memory regions).
+    pub fn set_addr_translator(&mut self, translator: &'static dyn crate::AddrTranslator) {
+        self.buddy.set_addr_translator(translator);
+    }
+
+    /// Allocate low-memory pages (physical address < 4GiB).
+    /// This is a thin wrapper over the buddy allocator's lowmem allocation.
+    pub fn alloc_pages_lowmem(
+        &mut self,
+        num_pages: usize,
+        alignment: usize,
+    ) -> AllocResult<usize> {
+        self.buddy.alloc_pages_lowmem(num_pages, alignment)
+    }
+
     /// Try to find and allocate contiguous small blocks from buddy free lists.
     ///
     /// This method searches buddy free lists for contiguous blocks that can satisfy

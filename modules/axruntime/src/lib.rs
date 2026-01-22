@@ -229,10 +229,12 @@ pub fn rust_main(cpu_id: usize, arg: usize) -> ! {
 
 #[cfg(feature = "alloc")]
 fn init_allocator() {
-    use axhal::mem::{MemRegionFlags, memory_regions, phys_to_virt};
+    use axhal::mem::{MemRegionFlags, memory_regions, phys_to_virt, virt_to_phys, VirtAddr};
 
     info!("Initialize global memory allocator...");
     info!("  use {} allocator.", axalloc::global_allocator().name());
+
+    axalloc::configure_addr_translator(virt_to_phys);
 
     let mut max_region_size = 0;
     let mut max_region_paddr = 0.into();

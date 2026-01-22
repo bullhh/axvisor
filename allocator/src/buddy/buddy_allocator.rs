@@ -16,6 +16,8 @@ use super::{buddy_block::MAX_ZONES, buddy_set::BuddySet, global_node_pool::Globa
 const NODE_POOL_PAGES: usize = 10;
 const NODE_POOL_LOW_WATER_NODES: usize = 128;
 const NODE_POOL_EXPAND_PAGES: usize = 5;
+/// Threshold for low-memory (DMA32-like) physical addresses: 4GiB.
+const LOWMEM_PHYS_THRESHOLD: usize = 1usize << 32;
 
 #[cfg(feature = "tracking")]
 use super::stats::{BuddyStats, MemoryStatsReporter};
@@ -31,6 +33,8 @@ pub struct BuddyPageAllocator<const PAGE_SIZE: usize = { crate::DEFAULT_PAGE_SIZ
     global_node_pool: GlobalNodePool,
     #[cfg(feature = "tracking")]
     stats: BuddyStats,
+    /// Optional address translator used to reason about physical addresses.
+    addr_translator: Option<&'static dyn crate::AddrTranslator>,
 }
 
 impl<const PAGE_SIZE: usize> BuddyPageAllocator<PAGE_SIZE> {
@@ -41,7 +45,14 @@ impl<const PAGE_SIZE: usize> BuddyPageAllocator<PAGE_SIZE> {
             global_node_pool: GlobalNodePool::new(),
             #[cfg(feature = "tracking")]
             stats: BuddyStats::new(),
+            addr_translator: None,
         }
+    }
+
+    /// Set the address translator so that the allocator can reason about
+    /// physical address ranges (e.g. low-memory regions below 4GiB).
+    pub fn set_addr_translator(&mut self, translator: &'static dyn crate::AddrTranslator) {
+        self.addr_translator = Some(translator);
     }
 
     /// Initialize the global node pool and bootstrap with initial memory region
@@ -70,6 +81,14 @@ impl<const PAGE_SIZE: usize> BuddyPageAllocator<PAGE_SIZE> {
 
         self.zones[0] = BuddySet::new(zone_base, zone_size, 0);
         self.zones[0].init(&mut self.global_node_pool, zone_base, zone_size);
+        // Mark whether this zone contains any low (<4G) physical memory, if translator is set.
+        if let Some(translator) = self.addr_translator {
+            if let Some(pa_start) = translator.virt_to_phys(zone_base) {
+                if pa_start < LOWMEM_PHYS_THRESHOLD {
+                    self.zones[0].is_lowmem = true;
+                }
+            }
+        }
         self.num_zones = 1;
 
         #[cfg(feature = "tracking")]
@@ -89,6 +108,72 @@ impl<const PAGE_SIZE: usize> BuddyPageAllocator<PAGE_SIZE> {
     /// Get number of zones in the allocator
     pub fn get_zone_count(&self) -> usize {
         self.num_zones
+    }
+
+    /// Allocate contiguous low-memory pages (physical address < 4GiB).
+    ///
+    /// This API is intended for DMA32-like use cases. It only considers zones
+    /// that are marked as `is_lowmem`, and after allocation it performs a
+    /// strict physical boundary check to ensure that both the start and end
+    /// physical addresses are below the 4GiB threshold.
+    pub fn alloc_pages_lowmem(
+        &mut self,
+        num_pages: usize,
+        alignment: usize,
+    ) -> AllocResult<usize> {
+        if num_pages == 0 {
+            return Err(AllocError::InvalidParam);
+        }
+
+        let translator = self
+            .addr_translator
+            .ok_or(AllocError::InvalidParam)?;
+
+        // Try to expand node pool if we are close to exhaustion
+        self.maybe_expand_node_pool();
+
+        let size_bytes = num_pages * PAGE_SIZE;
+
+        for i in 0..self.num_zones {
+            if !self.zones[i].is_lowmem {
+                continue;
+            }
+
+            match self.zones[i].alloc_pages(&mut self.global_node_pool, num_pages, alignment) {
+                Ok(addr) => {
+                    let start_va = addr;
+                    let end_va = addr + size_bytes - 1;
+
+                    // Ensure both start and end physical addresses are below the
+                    // low-memory threshold to avoid crossing the 4GiB boundary.
+                    if let (Some(pa_start), Some(pa_end)) = (
+                        translator.virt_to_phys(start_va),
+                        translator.virt_to_phys(end_va),
+                    ) {
+                        if pa_start < LOWMEM_PHYS_THRESHOLD && pa_end < LOWMEM_PHYS_THRESHOLD {
+                            #[cfg(feature = "tracking")]
+                            self.update_stats();
+                            return Ok(addr);
+                        }
+                    }
+
+                    // Boundary check failed: roll back this allocation and
+                    // continue searching for another suitable block.
+                    self.zones[i]
+                        .dealloc_pages(&mut self.global_node_pool, addr, num_pages);
+                }
+                Err(_) => {
+                    continue;
+                }
+            }
+        }
+
+        info!(
+            "buddy allocator: Low-memory allocation failure: {} Byte, align {}",
+            num_pages * PAGE_SIZE,
+            alignment
+        );
+        Err(AllocError::NoMemory)
     }
 
     /// Get free blocks of a specific order from a zone
@@ -200,6 +285,14 @@ impl<const PAGE_SIZE: usize> BuddyPageAllocator<PAGE_SIZE> {
         let zone_id = self.num_zones;
         self.zones[zone_id] = BuddySet::new(aligned_start, aligned_size, zone_id);
         self.zones[zone_id].init(&mut self.global_node_pool, aligned_start, aligned_size);
+        // Mark whether this zone contains any low (<4G) physical memory, if translator is set.
+        if let Some(translator) = self.addr_translator {
+            if let Some(pa_start) = translator.virt_to_phys(aligned_start) {
+                if pa_start < LOWMEM_PHYS_THRESHOLD {
+                    self.zones[zone_id].is_lowmem = true;
+                }
+            }
+        }
         self.num_zones += 1;
 
         // Print all zone information after successfully adding a new memory region
@@ -341,7 +434,12 @@ impl<const PAGE_SIZE: usize> PageAllocator for BuddyPageAllocator<PAGE_SIZE> {
         // Try to expand node pool if we are close to exhaustion
         self.maybe_expand_node_pool();
 
+        // First, prefer zones that are NOT marked as low-memory so that
+        // low-memory regions can be reserved for special use (e.g. DMA32).
         for i in 0..self.num_zones {
+            if self.zones[i].is_lowmem {
+                continue;
+            }
             match self.zones[i].alloc_pages(&mut self.global_node_pool, num_pages, alignment) {
                 Ok(addr) => {
                     #[cfg(feature = "tracking")]
@@ -353,6 +451,24 @@ impl<const PAGE_SIZE: usize> PageAllocator for BuddyPageAllocator<PAGE_SIZE> {
                 }
             }
         }
+
+        // Then, fall back to zones that are marked as low-memory.
+        for i in 0..self.num_zones {
+            if !self.zones[i].is_lowmem {
+                continue;
+            }
+            match self.zones[i].alloc_pages(&mut self.global_node_pool, num_pages, alignment) {
+                Ok(addr) => {
+                    #[cfg(feature = "tracking")]
+                    self.update_stats();
+                    return Ok(addr);
+                }
+                Err(_) => {
+                    continue;
+                }
+            }
+        }
+
         debug!(
             "buddy allocator: Allocation failure: {} Byte, align {}",
             num_pages * PAGE_SIZE,

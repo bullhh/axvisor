@@ -17,6 +17,8 @@ use kspin::SpinNoIrq;
 use kernel_guard::NoPreemptIrqSave;
 use strum::{IntoStaticStr, VariantArray};
 
+pub use buddy_slab_allocator::AddrTranslator;
+
 // Page size can be configured from here
 const PAGE_SIZE: usize = 0x1000;
 
@@ -98,9 +100,20 @@ impl GlobalAllocator {
         }
     }
 
+    /// Configure the address translator used by the underlying allocator so
+    /// that it can reason about physical address ranges (e.g. low-memory
+    /// regions below 4GiB).
+    pub fn set_addr_translator(
+        &self,
+        translator: &'static dyn buddy_slab_allocator::AddrTranslator,
+    ) {
+        let _guard = NoPreemptIrqSave::new();
+        self.inner.set_addr_translator(translator);
+    }
+
     /// Returns the name of the allocator.
     pub const fn name(&self) -> &'static str {
-        "buddy_slab_allocator"
+        "buddy-slab-allocator"
     }
 
     /// Initializes the allocator with the given region.
@@ -154,6 +167,22 @@ impl GlobalAllocator {
     ) -> AllocResult<usize> {
         let _guard = NoPreemptIrqSave::new();
         let result = self.inner.alloc_pages(num_pages, alignment);
+        if let Ok(_addr) = result {
+            let size = num_pages * PAGE_SIZE;
+            self.usages.lock().alloc(kind, size);
+        }
+        result
+    }
+
+    /// Allocates contiguous low-memory pages (physical address < 4GiB).
+    pub fn alloc_dma32_pages(
+        &self,
+        num_pages: usize,
+        alignment: usize,
+        kind: UsageKind,
+    ) -> AllocResult<usize> {
+        let _guard = NoPreemptIrqSave::new();
+        let result = self.inner.alloc_dma32_pages(num_pages, alignment);
         if let Ok(_addr) = result {
             let size = num_pages * PAGE_SIZE;
             self.usages.lock().alloc(kind, size);
@@ -324,8 +353,30 @@ pub fn global_init(start_vaddr: usize, size: usize) {
     info!("global allocator initialized");
 }
 
+struct FnAddrTranslator {
+    func: fn(memory_addr::VirtAddr) -> memory_addr::PhysAddr,
+}
+
+impl buddy_slab_allocator::AddrTranslator for FnAddrTranslator {
+    fn virt_to_phys(&self, va: usize) -> Option<usize> {
+        Some((self.func)(memory_addr::VirtAddr::from(va)).as_usize())
+    }
+}
+
+static mut GLOBAL_ADDR_TRANSLATOR: FnAddrTranslator = FnAddrTranslator {
+    func: |_| memory_addr::PhysAddr::from(0usize),
+};
+
+pub fn configure_addr_translator(func: fn(memory_addr::VirtAddr) -> memory_addr::PhysAddr) {
+    unsafe {
+        GLOBAL_ADDR_TRANSLATOR.func = func;
+        let translator: &'static FnAddrTranslator = &*(&raw const GLOBAL_ADDR_TRANSLATOR);
+        GLOBAL_ALLOCATOR.set_addr_translator(translator);
+    }
+}
+
 /// Add the given memory region to the global allocator.
-///
+
 /// Users should ensure that the region is valid and not being used by others,
 /// so that the allocated memory is also valid.
 ///
