@@ -187,6 +187,16 @@ impl<const PAGE_SIZE: usize> GlobalAllocator<PAGE_SIZE> {
     }
 
     /// Initialize allocator with given memory region
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use buddy_slab_allocator::GlobalAllocator;
+    ///
+    /// const PAGE_SIZE: usize = 0x1000;
+    /// let allocator = GlobalAllocator::<PAGE_SIZE>::new();
+    /// allocator.init(0x8000_0000, 16 * 1024 * 1024).unwrap();
+    /// ```
     pub fn init(&self, start_vaddr: usize, size: usize) -> AllocResult<()> {
         if size <= MIN_HEAP_SIZE {
             return Err(AllocError::InvalidParam);
@@ -243,6 +253,24 @@ impl<const PAGE_SIZE: usize> GlobalAllocator<PAGE_SIZE> {
     }
 
     /// Smart allocation based on size
+    ///
+    /// Small allocations (≤2048 bytes) use slab allocator,
+    /// larger allocations use page allocator.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use buddy_slab_allocator::GlobalAllocator;
+    /// use core::alloc::Layout;
+    ///
+    /// const PAGE_SIZE: usize = 0x1000;
+    /// let allocator = GlobalAllocator::<PAGE_SIZE>::new();
+    /// allocator.init(0x8000_0000, 16 * 1024 * 1024).unwrap();
+    ///
+    /// let layout = Layout::from_size_align(64, 8).unwrap();
+    /// let ptr = allocator.alloc(layout).unwrap();
+    /// allocator.dealloc(ptr, layout);
+    /// ```
     pub fn alloc(&self, layout: Layout) -> AllocResult<NonNull<u8>> {
         if !self.initialized.load(Ordering::SeqCst) {
             error!("global allocator: Allocator not initialized");
@@ -300,6 +328,19 @@ impl<const PAGE_SIZE: usize> GlobalAllocator<PAGE_SIZE> {
     }
 
     /// Allocate pages
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use buddy_slab_allocator::{GlobalAllocator, PageAllocator};
+    ///
+    /// const PAGE_SIZE: usize = 0x1000;
+    /// let allocator = GlobalAllocator::<PAGE_SIZE>::new();
+    /// allocator.init(0x8000_0000, 16 * 1024 * 1024).unwrap();
+    ///
+    /// let addr = allocator.alloc_pages(4, PAGE_SIZE).unwrap();
+    /// allocator.dealloc_pages(addr, 4);
+    /// ```
     pub fn alloc_pages(&self, num_pages: usize, alignment: usize) -> AllocResult<usize> {
         if !self.initialized.load(Ordering::SeqCst) {
             return Err(AllocError::NoMemory);

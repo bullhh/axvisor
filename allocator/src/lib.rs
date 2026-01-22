@@ -188,3 +188,61 @@ pub mod global_allocator;
 pub use global_allocator::GlobalAllocator;
 #[cfg(feature = "tracking")]
 pub use global_allocator::UsageStats;
+
+#[cfg(doc)]
+/// Documentation tests and examples
+///
+/// # Basic Usage
+///
+/// ```no_run
+/// use buddy_slab_allocator::{GlobalAllocator, PageAllocator};
+/// 
+/// const PAGE_SIZE: usize = 0x1000;
+/// let allocator = GlobalAllocator::<PAGE_SIZE>::new();
+/// 
+/// // Initialize with memory region
+/// let heap_start = 0x8000_0000;
+/// let heap_size = 16 * 1024 * 1024; // 16MB
+/// allocator.init(heap_start, heap_size).unwrap();
+/// 
+/// // Allocate pages
+/// let addr = allocator.alloc_pages(4, PAGE_SIZE).unwrap();
+/// // Use the allocated memory...
+/// allocator.dealloc_pages(addr, 4);
+/// ```
+///
+/// # Small Object Allocation
+///
+/// ```no_run
+/// use buddy_slab_allocator::GlobalAllocator;
+/// use core::alloc::Layout;
+/// 
+/// const PAGE_SIZE: usize = 0x1000;
+/// let allocator = GlobalAllocator::<PAGE_SIZE>::new();
+/// allocator.init(0x8000_0000, 16 * 1024 * 1024).unwrap();
+/// 
+/// // Small allocations go through slab allocator
+/// let layout = Layout::from_size_align(64, 8).unwrap();
+/// let ptr = allocator.alloc(layout).unwrap();
+/// // Use the allocated memory...
+/// allocator.dealloc(ptr, layout);
+/// ```
+///
+/// # Statistics Tracking
+///
+/// ```no_run
+/// # #[cfg(feature = "tracking")]
+/// # {
+/// use buddy_slab_allocator::GlobalAllocator;
+/// 
+/// const PAGE_SIZE: usize = 0x1000;
+/// let allocator = GlobalAllocator::<PAGE_SIZE>::new();
+/// allocator.init(0x8000_0000, 16 * 1024 * 1024).unwrap();
+/// 
+/// let stats = allocator.get_stats();
+/// println!("Total pages: {}", stats.total_pages);
+/// println!("Used pages: {}", stats.used_pages);
+/// println!("Free pages: {}", stats.free_pages);
+/// # }
+/// ```
+pub mod _examples {}

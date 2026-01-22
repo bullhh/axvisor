@@ -544,3 +544,87 @@ impl<const PAGE_SIZE: usize> PageAllocator for BuddyPageAllocator<PAGE_SIZE> {
         return 0;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::alloc::{alloc, dealloc};
+    use core::alloc::Layout;
+
+    const TEST_HEAP_SIZE: usize = 16 * 1024 * 1024;
+    const TEST_PAGE_SIZE: usize = 0x1000;
+
+    fn alloc_test_heap(size: usize) -> (*mut u8, Layout) {
+        let layout = Layout::from_size_align(size, TEST_PAGE_SIZE).unwrap();
+        let ptr = unsafe { alloc(layout) };
+        assert!(!ptr.is_null());
+        (ptr, layout)
+    }
+
+    fn dealloc_test_heap(ptr: *mut u8, layout: Layout) {
+        unsafe { dealloc(ptr, layout) };
+    }
+
+    #[test]
+    fn test_buddy_allocator_init() {
+        let (heap_ptr, heap_layout) = alloc_test_heap(TEST_HEAP_SIZE);
+        let heap_addr = heap_ptr as usize;
+
+        let mut allocator = BuddyPageAllocator::<TEST_PAGE_SIZE>::new();
+        allocator.init(heap_addr, TEST_HEAP_SIZE);
+
+        let addr = allocator.alloc_pages(1, TEST_PAGE_SIZE);
+        assert!(addr.is_ok());
+        if let Ok(a) = addr {
+            allocator.dealloc_pages(a, 1);
+        }
+
+        dealloc_test_heap(heap_ptr, heap_layout);
+    }
+
+    #[test]
+    fn test_buddy_allocator_multi_pages() {
+        let (heap_ptr, heap_layout) = alloc_test_heap(TEST_HEAP_SIZE);
+        let heap_addr = heap_ptr as usize;
+
+        let mut allocator = BuddyPageAllocator::<TEST_PAGE_SIZE>::new();
+        allocator.init(heap_addr, TEST_HEAP_SIZE);
+
+        let addr1 = allocator.alloc_pages(4, TEST_PAGE_SIZE).unwrap();
+        let addr2 = allocator.alloc_pages(8, TEST_PAGE_SIZE).unwrap();
+        assert_ne!(addr1, addr2);
+
+        allocator.dealloc_pages(addr1, 4);
+        allocator.dealloc_pages(addr2, 8);
+
+        dealloc_test_heap(heap_ptr, heap_layout);
+    }
+
+    #[test]
+    fn test_buddy_allocator_alignment() {
+        let (heap_ptr, heap_layout) = alloc_test_heap(TEST_HEAP_SIZE);
+        let heap_addr = heap_ptr as usize;
+
+        let mut allocator = BuddyPageAllocator::<TEST_PAGE_SIZE>::new();
+        allocator.init(heap_addr, TEST_HEAP_SIZE);
+
+        let addr = allocator.alloc_pages(1, TEST_PAGE_SIZE * 4).unwrap();
+        assert_eq!(addr & (TEST_PAGE_SIZE * 4 - 1), 0);
+
+        allocator.dealloc_pages(addr, 1);
+        dealloc_test_heap(heap_ptr, heap_layout);
+    }
+
+    #[test]
+    fn test_buddy_allocator_zone_count() {
+        let (heap_ptr, heap_layout) = alloc_test_heap(TEST_HEAP_SIZE);
+        let heap_addr = heap_ptr as usize;
+
+        let mut allocator = BuddyPageAllocator::<TEST_PAGE_SIZE>::new();
+        allocator.init(heap_addr, TEST_HEAP_SIZE);
+
+        assert_eq!(allocator.get_zone_count(), 1);
+
+        dealloc_test_heap(heap_ptr, heap_layout);
+    }
+}
