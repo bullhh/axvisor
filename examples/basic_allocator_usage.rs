@@ -36,7 +36,7 @@ pub fn main() {
 fn demo_global_allocator() {
     println!("\n--- 全局分配器演示 ---");
     
-    let global = GlobalAllocator::new();
+    let mut global = GlobalAllocator::new();
     
     // 初始化内存池 (16MB)
     global.init(0x80000000, 0x1000000).expect("初始化失败");
@@ -154,7 +154,7 @@ fn demo_memory_tracking() {
     enable_tracking();
     println!("已启用内存追踪");
     
-    let global = GlobalAllocator::new();
+    let mut global = GlobalAllocator::new();
     global.init(0xB0000000, 0x100000).expect("初始化失败");
     
     // 执行一些分配操作

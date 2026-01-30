@@ -196,15 +196,15 @@ pub use global_allocator::UsageStats;
 ///
 /// ```no_run
 /// use buddy_slab_allocator::{GlobalAllocator, PageAllocator};
-/// 
+///
 /// const PAGE_SIZE: usize = 0x1000;
-/// let allocator = GlobalAllocator::<PAGE_SIZE>::new();
-/// 
+/// let mut allocator = GlobalAllocator::<PAGE_SIZE>::new();
+///
 /// // Initialize with memory region
 /// let heap_start = 0x8000_0000;
 /// let heap_size = 16 * 1024 * 1024; // 16MB
 /// allocator.init(heap_start, heap_size).unwrap();
-/// 
+///
 /// // Allocate pages
 /// let addr = allocator.alloc_pages(4, PAGE_SIZE).unwrap();
 /// // Use the allocated memory...
@@ -216,11 +216,11 @@ pub use global_allocator::UsageStats;
 /// ```no_run
 /// use buddy_slab_allocator::GlobalAllocator;
 /// use core::alloc::Layout;
-/// 
+///
 /// const PAGE_SIZE: usize = 0x1000;
-/// let allocator = GlobalAllocator::<PAGE_SIZE>::new();
+/// let mut allocator = GlobalAllocator::<PAGE_SIZE>::new();
 /// allocator.init(0x8000_0000, 16 * 1024 * 1024).unwrap();
-/// 
+///
 /// // Small allocations go through slab allocator
 /// let layout = Layout::from_size_align(64, 8).unwrap();
 /// let ptr = allocator.alloc(layout).unwrap();
@@ -234,11 +234,11 @@ pub use global_allocator::UsageStats;
 /// # #[cfg(feature = "tracking")]
 /// # {
 /// use buddy_slab_allocator::GlobalAllocator;
-/// 
+///
 /// const PAGE_SIZE: usize = 0x1000;
-/// let allocator = GlobalAllocator::<PAGE_SIZE>::new();
+/// let mut allocator = GlobalAllocator::<PAGE_SIZE>::new();
 /// allocator.init(0x8000_0000, 16 * 1024 * 1024).unwrap();
-/// 
+///
 /// let stats = allocator.get_stats();
 /// println!("Total pages: {}", stats.total_pages);
 /// println!("Used pages: {}", stats.used_pages);

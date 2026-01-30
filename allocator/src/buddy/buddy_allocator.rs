@@ -116,18 +116,12 @@ impl<const PAGE_SIZE: usize> BuddyPageAllocator<PAGE_SIZE> {
     /// that are marked as `is_lowmem`, and after allocation it performs a
     /// strict physical boundary check to ensure that both the start and end
     /// physical addresses are below the 4GiB threshold.
-    pub fn alloc_pages_lowmem(
-        &mut self,
-        num_pages: usize,
-        alignment: usize,
-    ) -> AllocResult<usize> {
+    pub fn alloc_pages_lowmem(&mut self, num_pages: usize, alignment: usize) -> AllocResult<usize> {
         if num_pages == 0 {
             return Err(AllocError::InvalidParam);
         }
 
-        let translator = self
-            .addr_translator
-            .ok_or(AllocError::InvalidParam)?;
+        let translator = self.addr_translator.ok_or(AllocError::InvalidParam)?;
 
         // Try to expand node pool if we are close to exhaustion
         self.maybe_expand_node_pool();
@@ -159,8 +153,7 @@ impl<const PAGE_SIZE: usize> BuddyPageAllocator<PAGE_SIZE> {
 
                     // Boundary check failed: roll back this allocation and
                     // continue searching for another suitable block.
-                    self.zones[i]
-                        .dealloc_pages(&mut self.global_node_pool, addr, num_pages);
+                    self.zones[i].dealloc_pages(&mut self.global_node_pool, addr, num_pages);
                 }
                 Err(_) => {
                     continue;

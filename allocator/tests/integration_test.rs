@@ -146,7 +146,7 @@ fn test_composite_page_allocator_alloc_at() {
     // We just test that it doesn't crash
     let target_addr = heap_addr + PAGE_SIZE * 100;
     let _result = allocator.alloc_pages_at(target_addr, 4, PAGE_SIZE);
-    
+
     // If successful, clean up
     // if result.is_ok() {
     //     allocator.dealloc_pages(target_addr, 4);
@@ -165,7 +165,7 @@ fn test_slab_allocator_basic() {
 
     let mut slab_allocator = SlabByteAllocator::<PAGE_SIZE>::new();
     slab_allocator.init();
-    
+
     let page_alloc_ptr = &mut page_allocator as *mut CompositePageAllocator<PAGE_SIZE>
         as *mut dyn buddy_slab_allocator::slab::PageAllocatorForSlab;
     slab_allocator.set_page_allocator(page_alloc_ptr);
@@ -201,7 +201,7 @@ fn test_slab_allocator_many_objects() {
 
     let mut slab_allocator = SlabByteAllocator::<PAGE_SIZE>::new();
     slab_allocator.init();
-    
+
     let page_alloc_ptr = &mut page_allocator as *mut CompositePageAllocator<PAGE_SIZE>
         as *mut dyn buddy_slab_allocator::slab::PageAllocatorForSlab;
     slab_allocator.set_page_allocator(page_alloc_ptr);
@@ -209,7 +209,7 @@ fn test_slab_allocator_many_objects() {
     // Allocate many small objects
     let mut ptrs = Vec::new();
     let layout = Layout::from_size_align(32, 8).unwrap();
-    
+
     for _ in 0..100 {
         let ptr = slab_allocator.alloc(layout).unwrap();
         ptrs.push(ptr);
@@ -230,7 +230,7 @@ fn test_global_allocator_init() {
     let (heap_ptr, heap_layout) = alloc_test_heap(TEST_HEAP_SIZE);
     let heap_addr = heap_ptr as usize;
 
-    let allocator = GlobalAllocator::<PAGE_SIZE>::new();
+    let mut allocator = GlobalAllocator::<PAGE_SIZE>::new();
     let result = allocator.init(heap_addr, TEST_HEAP_SIZE);
     assert!(result.is_ok());
 
@@ -249,7 +249,7 @@ fn test_global_allocator_small_alloc() {
     let (heap_ptr, heap_layout) = alloc_test_heap(TEST_HEAP_SIZE);
     let heap_addr = heap_ptr as usize;
 
-    let allocator = GlobalAllocator::<PAGE_SIZE>::new();
+    let mut allocator = GlobalAllocator::<PAGE_SIZE>::new();
     allocator.init(heap_addr, TEST_HEAP_SIZE).unwrap();
 
     // Small allocations should go through slab
@@ -267,7 +267,7 @@ fn test_global_allocator_large_alloc() {
     let (heap_ptr, heap_layout) = alloc_test_heap(TEST_HEAP_SIZE);
     let heap_addr = heap_ptr as usize;
 
-    let allocator = GlobalAllocator::<PAGE_SIZE>::new();
+    let mut allocator = GlobalAllocator::<PAGE_SIZE>::new();
     allocator.init(heap_addr, TEST_HEAP_SIZE).unwrap();
 
     // Large allocations should go through page allocator
@@ -285,7 +285,7 @@ fn test_global_allocator_mixed_alloc() {
     let (heap_ptr, heap_layout) = alloc_test_heap(TEST_HEAP_SIZE);
     let heap_addr = heap_ptr as usize;
 
-    let allocator = GlobalAllocator::<PAGE_SIZE>::new();
+    let mut allocator = GlobalAllocator::<PAGE_SIZE>::new();
     allocator.init(heap_addr, TEST_HEAP_SIZE).unwrap();
 
     let mut allocations = Vec::new();
@@ -313,7 +313,7 @@ fn test_global_allocator_page_alloc() {
     let (heap_ptr, heap_layout) = alloc_test_heap(TEST_HEAP_SIZE);
     let heap_addr = heap_ptr as usize;
 
-    let allocator = GlobalAllocator::<PAGE_SIZE>::new();
+    let mut allocator = GlobalAllocator::<PAGE_SIZE>::new();
     allocator.init(heap_addr, TEST_HEAP_SIZE).unwrap();
 
     // Direct page allocation
@@ -337,14 +337,14 @@ fn test_global_allocator_add_memory() {
     let (heap_ptr2, heap_layout2) = alloc_test_heap(TEST_HEAP_SIZE);
     let heap_addr2 = heap_ptr2 as usize;
 
-    let allocator = GlobalAllocator::<PAGE_SIZE>::new();
+    let mut allocator = GlobalAllocator::<PAGE_SIZE>::new();
     allocator.init(heap_addr1, TEST_HEAP_SIZE).unwrap();
 
     let total_before = allocator.total_pages();
 
     // Try to add more memory (may fail if max zones reached)
     let _result = allocator.add_memory(heap_addr2, TEST_HEAP_SIZE);
-    
+
     // Note: add_memory may fail if we've reached maximum zones
     // We just verify the operation doesn't crash
 
@@ -378,7 +378,7 @@ fn test_statistics_tracking() {
     let (heap_ptr, heap_layout) = alloc_test_heap(TEST_HEAP_SIZE);
     let heap_addr = heap_ptr as usize;
 
-    let allocator = GlobalAllocator::<PAGE_SIZE>::new();
+    let mut allocator = GlobalAllocator::<PAGE_SIZE>::new();
     allocator.init(heap_addr, TEST_HEAP_SIZE).unwrap();
 
     let stats_initial = allocator.get_stats();
@@ -401,7 +401,7 @@ fn test_buddy_statistics() {
     let (heap_ptr, heap_layout) = alloc_test_heap(TEST_HEAP_SIZE);
     let heap_addr = heap_ptr as usize;
 
-    let allocator = GlobalAllocator::<PAGE_SIZE>::new();
+    let mut allocator = GlobalAllocator::<PAGE_SIZE>::new();
     allocator.init(heap_addr, TEST_HEAP_SIZE).unwrap();
 
     let buddy_stats = allocator.get_buddy_stats();
@@ -416,13 +416,13 @@ fn test_stress_allocation_deallocation() {
     let (heap_ptr, heap_layout) = alloc_test_heap(TEST_HEAP_SIZE);
     let heap_addr = heap_ptr as usize;
 
-    let allocator = GlobalAllocator::<PAGE_SIZE>::new();
+    let mut allocator = GlobalAllocator::<PAGE_SIZE>::new();
     allocator.init(heap_addr, TEST_HEAP_SIZE).unwrap();
 
     // Stress test with many allocations
     for round in 0..5 {
         let mut allocations = Vec::new();
-        
+
         for i in 0..50 {
             let size = match i % 5 {
                 0 => 8,

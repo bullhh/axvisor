@@ -119,11 +119,7 @@ impl<const PAGE_SIZE: usize> CompositePageAllocator<PAGE_SIZE> {
 
     /// Allocate low-memory pages (physical address < 4GiB).
     /// This is a thin wrapper over the buddy allocator's lowmem allocation.
-    pub fn alloc_pages_lowmem(
-        &mut self,
-        num_pages: usize,
-        alignment: usize,
-    ) -> AllocResult<usize> {
+    pub fn alloc_pages_lowmem(&mut self, num_pages: usize, alignment: usize) -> AllocResult<usize> {
         self.buddy.alloc_pages_lowmem(num_pages, alignment)
     }
 
@@ -260,7 +256,10 @@ impl<const PAGE_SIZE: usize> CompositePageAllocator<PAGE_SIZE> {
             );
 
             // Save metadata to tracker for proper deallocation
-            if !self.composite_tracker.insert(min_addr, &parts[..block_count], block_count) {
+            if !self
+                .composite_tracker
+                .insert(min_addr, &parts[..block_count], block_count)
+            {
                 // Tracker is full, rollback and fail
                 warn!("Composite tracker full, rolling back allocation");
                 for j in 0..block_count {
