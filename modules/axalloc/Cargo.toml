@@ -12,7 +12,8 @@ default = []
 tracking = ["dep:percpu", "dep:axbacktrace", "buddy-slab-allocator/tracking"]
 
 [dependencies]
-buddy-slab-allocator = {git = "https://github.com/arceos-hypervisor/buddy-slab-allocator.git", branch = "main", features = ["log"] }
+buddy-slab-allocator = {path = "/home/szy/work/hypervisor/s100/buddy-slab-allocator", features = ["log"] }
+#buddy-slab-allocator = {git = "https://github.com/arceos-hypervisor/buddy-slab-allocator.git", branch = "main", features = ["log"] }
 axbacktrace = { workspace = true, optional = true }
 axerrno.workspace = true
 kspin.workspace = true

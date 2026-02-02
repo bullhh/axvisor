@@ -128,7 +128,7 @@ impl GlobalAllocator {
     /// Add the given region to the allocator.
     pub fn add_memory(&self, start_vaddr: usize, size: usize) -> AllocResult {
         info!(
-            "Add memory region, start_vaddr: {}, size: {}",
+            "Add memory region, start_vaddr: 0x{:x}, size: 0x{:x}",
             start_vaddr, size
         );
         self.inner.lock().add_memory(start_vaddr, size)
