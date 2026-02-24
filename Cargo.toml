@@ -110,6 +110,7 @@ axvisor_api = {path = "modules/axvisor_api"}
 axvmconfig = {path = "modules/axvmconfig"}
 x86_vcpu = {path = "modules/x86_vcpu"}
 x86_vlapic = {path = "modules/x86_vlapic"}
+somehal = {path = "/home/szy/work/hypervisor/s100/somehal/somehal"}
 
 [patch."https://github.com/arceos-hypervisor/axdevice".axdevice]
 path = "modules/axdevice"
@@ -119,3 +120,4 @@ axconfig = {path = "modules/axconfig"}
 axruntime = {path = "modules/axruntime"}
 axfs = {path = "modules/axfs"}
 axalloc = {path = "modules/axalloc"}
+
