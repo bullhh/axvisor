@@ -185,7 +185,7 @@ dependencies = [
 [[package]]
 name = "arceos_api"
 version = "0.2.0"
-source = "git+https://github.com/arceos-org/arceos.git?tag=dev-251216#16096568f5ae6ad2d687eff2927a4cb69cef8133"
+source = "git+https://github.com/bullhh/arceos.git?branch=dev-251216#6ce3bc75363afbfc4d46fa9a75a6fc1b7a327145"
 dependencies = [
  "axalloc 0.3.0",
  "axconfig",
@@ -330,7 +330,7 @@ dependencies = [
 [[package]]
 name = "axalloc"
 version = "0.2.0"
-source = "git+https://github.com/arceos-org/arceos.git?tag=dev-251216#16096568f5ae6ad2d687eff2927a4cb69cef8133"
+source = "git+https://github.com/bullhh/arceos.git?branch=dev-251216#6ce3bc75363afbfc4d46fa9a75a6fc1b7a327145"
 dependencies = [
  "allocator",
  "axerrno 0.1.2",
@@ -431,7 +431,6 @@ dependencies = [
  "cfg-if",
  "log",
  "memory_addr",
- "range-alloc",
  "spin 0.9.8",
 ]
 
@@ -450,7 +449,7 @@ dependencies = [
 [[package]]
 name = "axdisplay"
 version = "0.2.0"
-source = "git+https://github.com/arceos-org/arceos.git?tag=dev-251216#16096568f5ae6ad2d687eff2927a4cb69cef8133"
+source = "git+https://github.com/bullhh/arceos.git?branch=dev-251216#6ce3bc75363afbfc4d46fa9a75a6fc1b7a327145"
 dependencies = [
  "axdriver",
  "axsync",
@@ -461,7 +460,7 @@ dependencies = [
 [[package]]
 name = "axdriver"
 version = "0.2.0"
-source = "git+https://github.com/arceos-org/arceos.git?tag=dev-251216#16096568f5ae6ad2d687eff2927a4cb69cef8133"
+source = "git+https://github.com/bullhh/arceos.git?branch=dev-251216#6ce3bc75363afbfc4d46fa9a75a6fc1b7a327145"
 dependencies = [
  "arm-gic-driver",
  "axalloc 0.3.0",
@@ -576,7 +575,7 @@ dependencies = [
 [[package]]
 name = "axfeat"
 version = "0.2.0"
-source = "git+https://github.com/arceos-org/arceos.git?tag=dev-251216#16096568f5ae6ad2d687eff2927a4cb69cef8133"
+source = "git+https://github.com/bullhh/arceos.git?branch=dev-251216#6ce3bc75363afbfc4d46fa9a75a6fc1b7a327145"
 dependencies = [
  "axalloc 0.2.0",
  "axbacktrace",
@@ -633,7 +632,7 @@ dependencies = [
 [[package]]
 name = "axhal"
 version = "0.2.0"
-source = "git+https://github.com/arceos-org/arceos.git?tag=dev-251216#16096568f5ae6ad2d687eff2927a4cb69cef8133"
+source = "git+https://github.com/bullhh/arceos.git?branch=dev-251216#6ce3bc75363afbfc4d46fa9a75a6fc1b7a327145"
 dependencies = [
  "axalloc 0.3.0",
  "axconfig",
@@ -689,7 +688,7 @@ dependencies = [
 [[package]]
 name = "axipi"
 version = "0.2.0"
-source = "git+https://github.com/arceos-org/arceos.git?tag=dev-251216#16096568f5ae6ad2d687eff2927a4cb69cef8133"
+source = "git+https://github.com/bullhh/arceos.git?branch=dev-251216#6ce3bc75363afbfc4d46fa9a75a6fc1b7a327145"
 dependencies = [
  "axconfig",
  "axhal",
@@ -712,7 +711,7 @@ dependencies = [
 [[package]]
 name = "axlog"
 version = "0.2.0"
-source = "git+https://github.com/arceos-org/arceos.git?tag=dev-251216#16096568f5ae6ad2d687eff2927a4cb69cef8133"
+source = "git+https://github.com/bullhh/arceos.git?branch=dev-251216#6ce3bc75363afbfc4d46fa9a75a6fc1b7a327145"
 dependencies = [
  "cfg-if",
  "crate_interface",
@@ -723,7 +722,7 @@ dependencies = [
 [[package]]
 name = "axmm"
 version = "0.2.0"
-source = "git+https://github.com/arceos-org/arceos.git?tag=dev-251216#16096568f5ae6ad2d687eff2927a4cb69cef8133"
+source = "git+https://github.com/bullhh/arceos.git?branch=dev-251216#6ce3bc75363afbfc4d46fa9a75a6fc1b7a327145"
 dependencies = [
  "axalloc 0.3.0",
  "axconfig",
@@ -739,7 +738,7 @@ dependencies = [
 [[package]]
 name = "axnet"
 version = "0.2.0"
-source = "git+https://github.com/arceos-org/arceos.git?tag=dev-251216#16096568f5ae6ad2d687eff2927a4cb69cef8133"
+source = "git+https://github.com/bullhh/arceos.git?branch=dev-251216#6ce3bc75363afbfc4d46fa9a75a6fc1b7a327145"
 dependencies = [
  "axdriver",
  "axerrno 0.1.2",
@@ -970,7 +969,7 @@ dependencies = [
 [[package]]
 name = "axstd"
 version = "0.2.0"
-source = "git+https://github.com/arceos-org/arceos.git?tag=dev-251216#16096568f5ae6ad2d687eff2927a4cb69cef8133"
+source = "git+https://github.com/bullhh/arceos.git?branch=dev-251216#6ce3bc75363afbfc4d46fa9a75a6fc1b7a327145"
 dependencies = [
  "arceos_api",
  "axerrno 0.1.2",
@@ -983,7 +982,7 @@ dependencies = [
 [[package]]
 name = "axsync"
 version = "0.2.0"
-source = "git+https://github.com/arceos-org/arceos.git?tag=dev-251216#16096568f5ae6ad2d687eff2927a4cb69cef8133"
+source = "git+https://github.com/bullhh/arceos.git?branch=dev-251216#6ce3bc75363afbfc4d46fa9a75a6fc1b7a327145"
 dependencies = [
  "axtask",
  "event-listener",
@@ -994,7 +993,7 @@ dependencies = [
 [[package]]
 name = "axtask"
 version = "0.2.0"
-source = "git+https://github.com/arceos-org/arceos.git?tag=dev-251216#16096568f5ae6ad2d687eff2927a4cb69cef8133"
+source = "git+https://github.com/bullhh/arceos.git?branch=dev-251216#6ce3bc75363afbfc4d46fa9a75a6fc1b7a327145"
 dependencies = [
  "axconfig",
  "axerrno 0.1.2",
@@ -1579,7 +1578,7 @@ version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "faf9468729b8cbcea668e36183cb69d317348c2e08e994829fb56ebfdfbaac34"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2309,7 +2308,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3190,8 +3189,6 @@ dependencies = [
 [[package]]
 name = "kasm-aarch64"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "791dc7a2b079d81b8e3615521fccbd75c0c9f068b53f7d891a2e300222c7cada"
 dependencies = [
  "darling 0.20.11",
  "proc-macro2",
@@ -3202,8 +3199,6 @@ dependencies = [
 [[package]]
 name = "kdef-pgtable"
 version = "0.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7166660a78a4488f5f3269206242d3b76cd6b42d870f004898487ce16dba3f69"
 dependencies = [
  "bitflags 2.10.0",
  "prettyplease",
@@ -3779,9 +3774,7 @@ dependencies = [
 
 [[package]]
 name = "page-table-generic"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a302d085e35d9edfa3ec531475ed95eae8a92e7e47ce7a15bd4e9c5e74f7526"
+version = "0.6.4"
 dependencies = [
  "bitflags 2.10.0",
  "log",
@@ -3917,17 +3910,13 @@ dependencies = [
 [[package]]
 name = "pie-boot-if"
 version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3d979b0d1208dd8a57c5adb7d3c4e07bf15cbea3840123e864f6bfcb655c5e05"
 dependencies = [
  "heapless 0.8.0",
 ]
 
 [[package]]
 name = "pie-boot-loader-aarch64"
-version = "0.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "de8836eb8759cd65e70c73dc0f519345d8a734284e8e4cfc5889a6e445af9f09"
+version = "0.3.4"
 dependencies = [
  "aarch64-cpu 10.0.0",
  "aarch64-cpu-ext",
@@ -3950,8 +3939,6 @@ dependencies = [
 [[package]]
 name = "pie-boot-macros"
 version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "513f5ca7603771d7524bfb7e6ba8dded83d2e8ac02d46f15815e0c1144bca566"
 dependencies = [
  "darling 0.20.11",
  "proc-macro2",
@@ -4138,7 +4125,7 @@ dependencies = [
  "once_cell",
  "socket2 0.6.1",
  "tracing",
- "windows-sys 0.60.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4220,11 +4207,6 @@ checksum = "76afc826de14238e6e8c374ddcc1fa19e374fd8dd986b0d2af0d02377261d83c"
 dependencies = [
  "getrandom 0.3.4",
 ]
-
-[[package]]
-name = "range-alloc"
-version = "0.1.4"
-source = "git+https://github.com/arceos-hypervisor/range-alloc.git#fc826e54dab9072be5358a1b0e7fc34503d6630d"
 
 [[package]]
 name = "ranges-ext"
@@ -4747,7 +4729,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.11.0",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5205,9 +5187,7 @@ dependencies = [
 
 [[package]]
 name = "somehal"
-version = "0.4.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "13b5f763b9ab0ce9efd2d8eba9e5b457f93f6426ede68435fe9567cf7681f29d"
+version = "0.4.9"
 dependencies = [
  "aarch64-cpu 10.0.0",
  "aarch64-cpu-ext",
@@ -5456,7 +5436,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.3",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
