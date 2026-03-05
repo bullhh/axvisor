@@ -464,13 +464,7 @@ fn vcpu_run() {
                         "VM[{vm_id}] VCpu[{vcpu_id}] run failed with exit code {hardware_entry_failure_reason}"
                     );
                 }
-                AxVCpuExitReason::ExternalInterrupt { vector } => {
-                    debug!("VM[{vm_id}] run VCpu[{vcpu_id}] get irq {vector}");
 
-                    // TODO: maybe move this irq dispatcher to lower layer to accelerate the interrupt handling
-                    axhal::irq::irq_handler(vector as usize);
-                    super::timer::check_events();
-                }
                 AxVCpuExitReason::Halt => {
                     debug!("VM[{vm_id}] run VCpu[{vcpu_id}] Halt");
                     wait(vm_id)
@@ -478,6 +472,10 @@ fn vcpu_run() {
                 AxVCpuExitReason::Nothing => {}
                 AxVCpuExitReason::CpuDown { _state } => {
                     warn!("VM[{vm_id}] run VCpu[{vcpu_id}] CpuDown state {_state:#x}");
+                    wait(vm_id)
+                }
+                AxVCpuExitReason::WaitForInterrupt => {
+                    debug!("VM[{vm_id}] run VCpu[{vcpu_id}] WaitForInterrupt");
                     wait(vm_id)
                 }
                 AxVCpuExitReason::CpuUp {

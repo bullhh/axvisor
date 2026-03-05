@@ -36,6 +36,7 @@ timer_list = "0.1"
 toml = "0.9"
 ranges-ext = "0.3"
 vm-allocator = {git = "https://github.com/rust-vmm/vm-allocator.git", ref = "c66cfac", default-features = false}
+somehal = "0.4"
 
 # System dependent modules provided by ArceOS.
 # FIXME: pin to a specific tag!
@@ -110,7 +111,7 @@ axvisor_api = {path = "modules/axvisor_api"}
 axvmconfig = {path = "modules/axvmconfig"}
 x86_vcpu = {path = "modules/x86_vcpu"}
 x86_vlapic = {path = "modules/x86_vlapic"}
-somehal = {path = "/home/szy/work/hypervisor/s100/somehal/somehal"}
+somehal = {git = "https://github.com/bullhh/somehal.git", branch = "overlap"}
 
 [patch."https://github.com/arceos-hypervisor/axdevice".axdevice]
 path = "modules/axdevice"
