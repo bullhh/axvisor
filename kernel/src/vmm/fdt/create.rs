@@ -315,12 +315,12 @@ pub fn update_fdt(fdt_src: NonNull<u8>, dtb_size: usize, vm: VMRef) {
                     let bootargs_str = prop.str();
                     let modified_bootargs = bootargs_str.replace(" ro ", " rw ");
 
-                    if modified_bootargs != bootargs_str {
+                    // if modified_bootargs != bootargs_str {
                         info!(
                             "Modifying bootargs: {} -> {}",
                             bootargs_str, modified_bootargs
                         );
-                    }
+                    // }
 
                     new_fdt
                         .property_string(prop.name, &modified_bootargs)
